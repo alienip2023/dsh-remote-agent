@@ -206,6 +206,11 @@ check('15c', 'hub 不再补 socket "end" 兜底（冻结层已统一处理）',
 check('15d', 'KNOWN-ISSUES 第 2 节标记为已清理（与实现同步）',
   /##\s*2\.[^\n]*已清理/.test(known),
   'KNOWN-ISSUES.md 第 2 节标题')
+// 第 6 节记录测试方法论（等价性判定 / 假绿 / 还原比注入危险 / Windows 编码坑）。
+// 它是写给后续维护者的经验，删掉不会让任何测试变红 —— 所以在这里钉住。
+check('15e', 'KNOWN-ISSUES 第 6 节记录测试方法论',
+  /##\s*6\.[^\n]*测试方法论/.test(known) && /与原实现等价/.test(known) && /U\+FFFD/.test(known),
+  'KNOWN-ISSUES.md 第 6 节')
 
 /* ── 16. client.js 契约 ── */check('16', 'PANEL_KEY 是单符号常量', /PANEL_KEY\s*=\s*'dsh-remote-agent'/.test(client), 'client.js')
 check('17', 'sidebar.panellist 用 id: PANEL_KEY', /id:\s*PANEL_KEY/.test(client), 'client.js')
