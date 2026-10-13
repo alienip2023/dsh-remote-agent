@@ -1,0 +1,69 @@
+{
+  "name": "dsh-remote-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "把另一台电脑变成你 DSH 的远程 Agent 同事：副机本地持久跑任务、独立 Agent 循环，只回传 handoff 摘要与产物清单，成品按需拉取。",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zbzbhs/dsh-remote-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zbzbhs/dsh-remote-agent/issues"
+  },
+  "homepage": "https://github.com/zbzbhs/dsh-remote-agent#readme",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "remote-agent",
+    "handoff",
+    "artifact",
+    "subagent-provider"
+  ],
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./hub": "./lib/hub/index.js",
+    "./worker": "./lib/node/index.js",
+    "./protocol": "./lib/protocol.js",
+    "./relay": "./lib/relay.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./profiles/hub.cordis.yml": "./profiles/hub.cordis.yml",
+    "./profiles/worker.cordis.yml": "./profiles/worker.cordis.yml"
+  },
+  "main": "./lib/index.js",
+  "bin": {
+    "dsh-remote-relay": "./bin/dsh-remote-relay.js"
+  },
+  "files": [
+    "lib",
+    "bin",
+    "profiles",
+    "scripts",
+    "cordis.patch.yml",
+    "KNOWN-ISSUES.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check:docs": "node scripts/check-doc-drift.mjs",
+    "check": "npm run check:docs && npm test"
+  }
+}

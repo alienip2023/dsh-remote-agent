@@ -1,0 +1,52 @@
+# dsh-remote-agent —— 副机（worker）profile 覆盖片段
+#
+# 用法：把本文件内容并入副机 profile 的 patch 层（默认
+# `<DSH_HOME>/profiles/<profile>/cordis.patch.yml`）。
+# 副机 dsh 启动时按这一行加载 worker：拨入 hub / relay，把主电脑派来的任务
+# 在本机以独立 agent 会话持久执行。
+#
+# ⚠ id 必须是 `remote-agent`，与包内 cordis.patch.yml 插入的那一行**同 id**。
+#   loader 按 id 覆盖：同 id 才是"改这一行的 config"，不同 id 会变成**两行**，
+#   插件被挂载两次 → 启动失败（double-mount）。本文件是"覆盖那一行"。
+#
+# 关键点：
+#   - 副机不需要 webServer；缺 agentLoop 时自动降级到 headless 后端，不报错。
+#   - hub 不可达时**不会**阻塞或失败：连接在后台退避重试（1s→30s，带抖动），
+#     期间本机 dsh 正常可用，已受理的任务照跑（断连不终止）。
+#   - relay 模式双方都在 NAT 后也能用；direct 模式需要 hub 侧有可达地址。
+#     两种模式只改 transportMode / url，任务语义完全一样。
+#   - roots 是安全边界：只允许任务在列出的根目录内工作，务必按实际机器填写。
+#     留空会退回保守默认（home 下的工作目录），不要依赖这个默认。
+#   - token 优先读配置；留空则读 <stateDir>/token 文件（便于不把凭证写进 YAML）。
+#     上线前把 CHANGE_ME 换掉，或用一次性入网 token。
+#
+# 关闭本插件：给该行加 `disabled: true`（同 id），不要删文件。
+- id: remote-agent
+  name: dsh-remote-agent
+  config:
+    role: worker
+
+    # 节点唯一标识。必须匹配 ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$。
+    # 同 id 起两个实例会被中继以 duplicate-node 拒掉。
+    nodeId: slave-pc
+
+    # 'relay'（双方都在 NAT 后）| 'direct'（hub 有可达地址）
+    transportMode: relay
+    relayUrl: 'ws://RELAY_HOST:8890/relay'
+    # direct 模式改这两项，并注释掉上面的 relayUrl：
+    # transportMode: direct
+    # hubUrl: 'ws://HUB_HOST:8890/api/remote-agent/node'
+
+    token: 'CHANGE_ME'
+
+    # 允许任务操作的工作区根（绝对路径，必须真实存在）。
+    roots:
+      - 'D:\work'
+
+    # 以下为可选覆盖项，默认值已可用，按需打开：
+    # stateDir: 'C:\Users\you\.dsh-remote-agent'   # 缺省 ~/.dsh-remote-agent
+    # denyPaths: []                                # 额外禁止访问的路径
+    # dshBin: 'dsh'                                # headless 回退用的 dsh
+    # preferHeadless: false                        # true = 强制 headless 后端
+    # maxConcurrent: 2                             # 并发任务上限
+    # resumeQueued: true                           # 启动时重跑遗留 queued 任务

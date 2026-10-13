@@ -1,0 +1,42 @@
+# dsh-remote-agent bundle patch（package.json 的 dsh.bundle.patch 指向本文件）。
+#
+# 作用：让 `dsh plugin add dsh-remote-agent` / plugin_manager 的 install_bundle
+# 能把插件行插入 loader。没有这个文件，loader 读不到 patch，插件行永不插入，
+# remote_* 工具永不注册 —— 这是 v0.1 的一个真实 blocker（由 t5 独立验证发现）。
+#
+# ── 关于 role 的默认值 ──────────────────────────────────────────────
+# 一个包只有一个 dsh.bundle.patch，但 hub 与 worker 需要不同的 config。
+# 所以这里插入一个**中性默认**（role: hub，不做任何连接），然后由用户在自己
+# profile 的 cordis.patch.yml 里按 id 覆盖成需要的角色与连接参数：
+#
+#   主电脑（hub）：
+#     - id: remote-agent
+#       config:
+#         role: hub
+#         relay:
+#           url: ws://RELAY_HOST:8890/relay
+#           token: <relay hub token>
+#
+#   副电脑（worker）：
+#     - id: remote-agent
+#       config:
+#         role: worker
+#         transportMode: relay
+#         relayUrl: ws://RELAY_HOST:8890/relay
+#         token: <enroll token>
+#         roots: ['D:\work']
+#         nodeId: 'slave-pc'
+#
+# 完整的可复制片段见 profiles/hub.cordis.yml 与 profiles/worker.cordis.yml。
+#
+# ── 为什么默认 role: hub 而不是 worker ──────────────────────────────
+# hub 角色在没有任何配置时是**惰性**的：它注册路由与工具，但不主动拨出任何连接，
+# 也不写磁盘。worker 角色默认会尝试连 relay 并在连不上时退避重试（虽然不阻塞启动），
+# 对一个"刚装好还没配置"的 profile 来说噪声更大。所以默认取 hub。
+#
+# 关闭本插件：给该行加 disabled: true，而不是删掉这个文件。
+- insert:
+    - id: remote-agent
+      name: dsh-remote-agent
+      config:
+        role: hub

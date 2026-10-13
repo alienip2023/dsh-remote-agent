@@ -1,0 +1,44 @@
+# 换行符策略 —— 这个包会被 Windows 与 Linux 机器同时使用，必须显式钉住。
+#
+# 背景：中继通常跑在 Linux VPS 上（scripts/relay-init.sh），副机是 Windows。
+# 若让 git 按平台自动转换（core.autocrlf），shell 脚本会被写成 CRLF ——
+# Linux 上执行时报 `bad interpreter: No such file or directory`（\r 被当成解释器名的一部分）。
+# 这类问题在本机测不出来（本机是 Windows），到 VPS 才炸，所以必须在这里钉死。
+#
+#   text eol=lf   强制 LF（shell 脚本、JSON、YAML、源码）
+#   binary        不做任何转换（将来若有图片/字体）
+
+# 默认：文本文件一律 LF，绝不做平台转换
+* text=auto eol=lf
+
+# 显式钉住 LF（对执行/解析敏感的文件）
+*.sh      text eol=lf
+*.mjs     text eol=lf
+*.js      text eol=lf
+*.json    text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.md      text eol=lf
+
+# PowerShell 脚本：Windows 上执行，但内容含 BOM 要求（见 scripts/relay-init.ps1）。
+# 仍用 LF —— PowerShell 5.1 能正确读 LF 换行；而 CRLF 在跨平台 diff 时噪声大。
+*.ps1     text eol=lf
+
+# 无扩展名的可执行脚本
+LICENSE   text eol=lf
+
+# 二进制：不做转换
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.webp    binary
+*.ico     binary
+*.svg     text eol=lf
+*.woff    binary
+*.woff2   binary
+*.zip     binary
+*.tgz     binary
+
+# 二进制 / 生成物：git diff 与 merge 都无意义
+*.onnx    binary

@@ -1,0 +1,38 @@
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node
+node_modules/
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# Local scratch: logs, throwaway probes
+*.log
+tmp/
+scratch/
+
+# ---------------------------------------------------------------------------
+# 注意：lib/** 是**故意提交**的。
+#
+# 本包没有构建步骤 —— lib/ 里的 .js 就是 DSH 实际加载的产物（纯 ESM，无转译）。
+# 提交它们才能让插件直接从 git 安装（`dsh plugin add github:user/repo`），
+# 用户侧不需要 pnpm install 之外的任何准备。
+#
+# test/ 也提交：它是这个包的质量防线，且 `npm test` 无外部依赖即可跑。
+# ---------------------------------------------------------------------------
+
+# 产物拉取的默认落地目录（若用户把 uiPullRoot 指到仓库内，别把它提交进去）
+remote-artifacts/
+
+# 中继的一次性 token 文件：绝不提交
+tokens.json
+.relay-tokens/

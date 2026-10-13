@@ -1,0 +1,187 @@
+/**
+ * 文档 vs 实现 字段级比对（可复用收尾检查）。
+ *
+ * 由来：t12 期间出现过两次「文档写完后实现又改了」造成的漂移（t9 改了
+ * ui-routes.js 的 pullRoot 语义与新增 guard 围栏，而文档没跟上）。手工比对
+ * 每次都要重新读一遍代码，容易漏。这个脚本把比对固化成 13 项断言，
+ * 任何改了 client.js / ui-routes.js 的改动落地后都能一键重跑。
+ *
+ * 用法：
+ *   node scripts/check-doc-drift.mjs          # 只报告
+ *   node scripts/check-doc-drift.mjs --json   # 机器可读
+ *
+ * 退出码：0 = 无漂移；1 = 有漂移（打印逐项结果）。
+ *
+ * 注意：它比对的是**关键契约**（字段名、默认值、路由、错误码），
+ * 不是文档措辞。措辞差异不报，只有"文档说的与实现不符"才报。
+ */
+import fs from 'node:fs'
+import path from 'node:path'
+import process from 'node:process'
+
+const ROOT = path.resolve(import.meta.dirname, '..')
+const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8')
+
+const uiRoutes = read('lib/hub/ui-routes.js')
+const hubIndex = read('lib/hub/index.js')
+const client = read('lib/client.js')
+const readme = read('profiles/README.md')
+const known = read('KNOWN-ISSUES.md')
+const pkg = JSON.parse(read('package.json'))
+
+const results = []
+const check = (id, label, ok, detail) => results.push({ id, label, ok: Boolean(ok), detail })
+
+/**
+ * 取一个具名函数的完整函数体（花括号匹配）。
+ *
+ * 为什么不能用固定长度窗口：早先断言 15b 用 `slice(idx, idx + 900)`，
+ * 而 `handoffView` 函数体有 2260 字符 —— 窗口只覆盖 40%，函数尾部的
+ * 注入会被漏掉（假阴性）。固定窗口对"函数体长度会随改动变化"这件事
+ * 天然脆弱，必须按花括号配对取完整体。
+ */
+function bodyOf(src, fnName) {
+  const start = src.indexOf(`function ${fnName}`)
+  if (start === -1) return ''
+  let depth = 0
+  for (let i = src.indexOf('{', start); i < src.length; i += 1) {
+    if (src[i] === '{') depth += 1
+    else if (src[i] === '}') {
+      depth -= 1
+      if (depth === 0) return src.slice(start, i + 1)
+    }
+  }
+  return src.slice(start)
+}
+
+/* ── 1. /overview 字段 + capabilities 三项 ── */
+check('1', '/overview 返回 nodes/counts/capabilities',
+  /nodes,/.test(uiRoutes) && /counts:/.test(uiRoutes) && /capabilities:/.test(uiRoutes),
+  'ui-routes.js overview handler')
+check('2', 'capabilities 含 pull/pullRoot/dispatch 三项',
+  /pull:\s*typeof pullRoot/.test(uiRoutes) && /pullRoot:/.test(uiRoutes) && /dispatch:\s*true/.test(uiRoutes),
+  'ui-routes.js capabilities')
+
+/* ── 3. pullRoot 未配置回 null（配置层是空串） ── */
+check('3', 'API 层 pullRoot 未配置回 null',
+  /pullRoot:\s*typeof pullRoot === 'string' && pullRoot !== '' \? pullRoot : null/.test(uiRoutes),
+  'ui-routes.js:412 附近')
+check('4', '配置层 uiPullRoot 默认空串',
+  /uiPullRoot:\s*typeof c\.uiPullRoot === 'string' && c\.uiPullRoot !== '' \? c\.uiPullRoot : ''/.test(hubIndex),
+  'hub/index.js:47 附近')
+check('5', '文档说明了两层空值差异（配置层 \'\' vs API 层 null）',
+  /空值|空串|null/.test(readme) && /uiPullRoot/.test(readme),
+  'profiles/README.md 配置节')
+
+/* ── 6. 7 条路由路径 ── */
+const UI_PREFIX = '/api/remote-agent/ui'
+for (const seg of ['overview', 'nodes', 'tasks', 'task', 'dispatch', 'cancel', 'pull']) {
+  check(`6.${seg}`, `路由 ${UI_PREFIX}/${seg} 已注册`,
+    uiRoutes.includes(`\${UI_API_PREFIX}/${seg}`) || uiRoutes.includes(`${UI_PREFIX}/${seg}`),
+    'ui-routes.js route 注册')
+}
+check('7', 'UI_API_PREFIX 常量值正确', uiRoutes.includes(`'${UI_PREFIX}'`), 'ui-routes.js:23 附近')
+
+/* ── 8. 方法约束 ── */
+check('8', 'GET 路由拒绝非 GET', /method !== 'GET'/.test(uiRoutes), 'ui-routes.js 各 GET route')
+check('9', 'POST 路由拒绝非 POST', /method !== 'POST'/.test(uiRoutes), 'ui-routes.js 各 POST route')
+
+/* ── 10. 错误码 ── */
+for (const [code, where] of [
+  ['pull-disabled', '未配置 uiPullRoot 时 pull 拒绝'],
+  ['dest-outside-pull-root', 'dest 越界'],
+  ['pull-root-unusable', 'pullRoot 不可用'],
+  ['goal-required', 'dispatch 缺 goal'],
+  ['node-unknown', 'dispatch 未知节点'],
+  ['taskId-and-paths-required', 'pull 缺参数'],
+]) {
+  check(`10.${code}`, `错误码 ${code}（${where}）`, uiRoutes.includes(`'${code}'`) || uiRoutes.includes(`"${code}"`), 'ui-routes.js')
+}
+
+/* ── 11. 请求围栏（t9 新增，t12 曾漏写文档） ── */
+check('11', '存在请求围栏 makeGuard',
+  /makeGuard/.test(uiRoutes) && /requestRejection/.test(uiRoutes),
+  'ui-routes.js guard')
+// 围栏必须**真的失败关闭**，不只是"文件里出现过 403 这个词"。
+// 早先用 `/403/.test(uiRoutes) && /requestRejection/.test(uiRoutes)` —— 那只是
+// "两个词存在即通过"。实测把 catch 里的 `rejection = 403` 改成 `undefined`
+// （安全语义反转成"失败放行"）仍然通过 = 假阴性。文件里有 7 处 403、2 处
+// `rejection = 403`，所以必须**锚定 catch 分支那一处**。
+check('12', '围栏失败关闭（不静默放行）',
+  /failing closed[\s\S]{0,200}?\n\s*rejection = 403\b/.test(uiRoutes)
+  && /if \(!guard\(req, res, pathname\)\) return/.test(uiRoutes),
+  'ui-routes.js guard catch 分支（行首赋值）+ 调用点')
+check('13', '文档提到路由自带同源/鉴权围栏',
+  /围栏/.test(readme),
+  'profiles/README.md 第 4 节')
+
+/* ── 14. handoff 投影（t9 新增 handoffView） ── */
+check('14', 'handoff 经 handoffView 投影（不直出副机对象）',
+  /function handoffView/.test(uiRoutes) && /handoff:\s*handoffView\(/.test(uiRoutes),
+  'ui-routes.js')
+// 直出形态是代码里的 `handoff: t.handoff`，不是注释里的反例说明。
+// 两处踩过的坑：(a) `\b` 在 `)` 前也成立，把 `handoff: handoffView(t.handoff)`
+// 误判为直出；(b) 不剥注释时，t9 写的「为什么不能 `{ handoff: t.handoff }` 直接回」
+// 这句注释会被当成真代码。所以先剥注释，再匹配。
+const uiRoutesCode = uiRoutes
+  .replace(/\/\*[\s\S]*?\*\//g, '')   // 块注释
+  .replace(/^\s*\/\/.*$/gm, '')        // 行注释
+check('15', 'handoff 无裸直出（handoff: t.handoff）',
+  !/handoff:\s*t\.handoff\s*[,}]/.test(uiRoutesCode),
+  'ui-routes.js 代码区（已剥注释）')
+check('15b', 'handoffView 移除了 logs 与 workspace 键',
+  (() => {
+    // 用花括号匹配取完整函数体，且**两个键都要查**。
+    // 早先的写法有两个问题：(a) 900 字符固定窗口只覆盖函数体 40%；
+    // (b) 标签说查 logs 与 workspace，正则却只查了 logs。
+    const body = bodyOf(uiRoutes, 'handoffView')
+    return body !== '' && !/^\s*logs:/m.test(body) && !/^\s*workspace:/m.test(body)
+  })(),
+  'ui-routes.js handoffView 函数体（花括号匹配，查 logs 与 workspace）')
+
+/* ── 16. client.js 契约 ── */
+check('16', 'PANEL_KEY 是单符号常量', /PANEL_KEY\s*=\s*'dsh-remote-agent'/.test(client), 'client.js')
+check('17', 'sidebar.panellist 用 id: PANEL_KEY', /id:\s*PANEL_KEY/.test(client), 'client.js')
+check('18', 'main 用 key: PANEL_KEY', /key:\s*PANEL_KEY/.test(client), 'client.js')
+check('19', 'client 侧 API 前缀与 Host 一致',
+  client.includes(`'${UI_PREFIX}'`), 'client.js var API')
+check('20', '轮询间隔 4 秒（文档已声明）',
+  /setInterval\(load,\s*4000\)/.test(client) && /4\s*秒/.test(readme),
+  'client.js + README')
+check('21', '主题 token 带兜底 currentColor（t11 误报后的加固）',
+  /state-idle-primary,currentColor/.test(client), 'client.js')
+
+/* ── 22. 配置字段存在且文档覆盖 ── */
+check('22', 'uiEnabled 配置存在且默认 true',
+  /uiEnabled:\s*c\.uiEnabled !== false/.test(hubIndex), 'hub/index.js:46 附近')
+check('23', '文档提到 uiEnabled 与 uiPullRoot',
+  /uiEnabled/.test(readme) && /uiPullRoot/.test(readme), 'profiles/README.md')
+
+/* ── 24. package.json 的 client 声明 ── */
+check('24', 'dsh.client.platform 为 web',
+  pkg.dsh?.client?.platform === 'web', 'package.json')
+check('25', 'exports["./client"] 指向 lib/client.js',
+  pkg.exports?.['./client'] === './lib/client.js', 'package.json')
+check('26', 'KNOWN-ISSUES 记录了 combo 路由与 404 正常性',
+  /combo/.test(known) && /404/.test(known), 'KNOWN-ISSUES.md 第 4 节')
+
+/* ── 27. 文档声明的 DSH 版本 ── */
+check('27', 'KNOWN-ISSUES 声明了验证的 DSH 版本',
+  /DSH\s*44\.0\.0|44\.0\.0/.test(known), 'KNOWN-ISSUES.md')
+
+/* ── 输出 ── */
+const failed = results.filter((r) => !r.ok)
+if (process.argv.includes('--json')) {
+  console.log(JSON.stringify({ total: results.length, failed: failed.length, results }, null, 2))
+} else {
+  console.log('=== 文档 vs 实现 字段级比对 ===\n')
+  for (const r of results) {
+    console.log(`${r.ok ? 'OK  ' : 'DRIFT'}  [${r.id}] ${r.label}${r.ok ? '' : `  <- ${r.detail}`}`)
+  }
+  console.log(`\n${results.length - failed.length}/${results.length} 一致`)
+  if (failed.length > 0) {
+    console.log(`\n⚠ ${failed.length} 处漂移（文档与实现不符）：`)
+    for (const f of failed) console.log(`  [${f.id}] ${f.label} —— 依据：${f.detail}`)
+  }
+}
+process.exit(failed.length === 0 ? 0 : 1)

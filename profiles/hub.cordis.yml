@@ -1,0 +1,84 @@
+# dsh-remote-agent —— 主机侧（hub）profile 覆盖片段
+#
+# 用法：把这一段并入主电脑的 profile patch 层（默认
+# `<DSH_HOME>/profiles/<profile>/cordis.patch.yml`）。
+#
+# ⚠ id 必须是 `remote-agent`，与包内 cordis.patch.yml 插入的那一行**同 id**。
+#   loader 按 id 覆盖：同 id 才是"改这一行的 config"，不同 id 会变成**两行**，
+#   插件被挂载两次 → 路由/工具重复注册 → 启动失败（double-mount）。
+#   所以本文件是"覆盖那一行"，不是"再插一行"。
+#
+# 三种接入方式（细节见 profiles/README.md）：
+#
+#   1) 双方都在 NAT 后 —— 经中继会合（v0.1 默认路径）
+#        relay:
+#          url: ws://RELAY_HOST:8890/relay
+#          token: <relay hub token>
+#
+#   2) 一方有公网 —— 直连，副机拨 hub 的 WebSocket 端点
+#        nodeToken: <自定义共享口令>      # 公网暴露时必填
+#
+#   3) cloudflared 隧道 —— 把 hub 的本地端口暴露成公网域名，副机仍走 direct
+#        nodeToken: <自定义共享口令>
+#
+# 关闭本插件：给该行加 `disabled: true`（同 id），不要删文件。
+- id: remote-agent
+  name: dsh-remote-agent
+  config:
+    # 'hub' | 'worker' | 'both'（默认 'hub'）。同一台机器自测时用 'both'。
+    role: hub
+
+    # 直连 upgrade 路径。副机侧 lib/node/transport.js 的 direct 分支写死了同一个
+    # 路径，改这里必须同时改那边，否则两边谈不到一起。
+    nodePath: /api/remote-agent/node
+
+    # direct 模式下校验 x-dsh-token。留空 = 不校验（只在可信内网用）。
+    # 经中继接入时这个字段不参与鉴权：中继有自己的 hubToken / enrollToken。
+    nodeToken: ''
+
+    # 是否向主 agent 注入"远程同事"用法说明（order 152）。
+    # 只有 remote_* 工具、不需要提示词时置 false。
+    systemPrompt: true
+
+    # healthz 是否暴露 nodes/online/tasks/activePulls 计数。
+    # 该路由无鉴权，置 false 时只回 {ok,plugin,role,protocol}。
+    healthDetail: true
+
+    # ── 可视化界面（浏览器面板）────────────────────────────────────
+    # 侧栏「远程同事」图标 → 主面板：看节点、看任务、派任务、看结果卡、拉成品。
+    # 只有主电脑（hub）侧有面板；副机不需要任何 UI 配置。
+
+    # 是否注册整组 UI 路由（/api/remote-agent/ui/*）。
+    # 默认 true。设 false 时面板取不到数据（图标仍在，但面板会报读取失败）。
+    uiEnabled: true
+
+    # ⚠ 安全边界：**面板唯一允许写盘的目标根目录**（必须是绝对路径）。
+    #   - 不配置（留空/注释掉，即默认）→ 面板的「拉取全部成品」按钮**禁用**，
+    #     后端 pull 动作直接返回 403 pull-disabled，不写任何字节。
+    #   - 配置之后 → 产物只能落到这个目录内：面板只接受相对子路径，hub 侧先做
+    #     字符串层校验（挡 ../），再 realpath 归一后复查（挡符号链接），两道都
+    #     通过才落盘；越界返回 403 dest-outside-pull-root。
+    #   - 命令行 remote_pull 工具**不受**本字段限制（它有自己的 dest 参数）。
+    # 默认刻意注释掉：写盘必须由你显式指定一个愿意被写的目录。
+    # 想彻底禁止 Web 写盘就保持注释（或 uiEnabled: false 关掉整组路由）。
+    # 注意：YAML 里反斜杠不转义，Windows 路径用单引号包住。
+    # uiPullRoot: 'D:\remote-artifacts'
+
+    # 中继接入（可选）。不用中继就整段删掉或注释掉。
+    # relay:
+    #   url: ws://127.0.0.1:8890/relay
+    #   token: ''
+
+    # 限制。留默认即可；调小 maxPullBytes 能防止一次拉走一个巨大的产物。
+    limits:
+      heartbeatMs: 15000
+      ackTimeoutMs: 60000
+      # 产物拉取的**空闲**超时：每收到一块就重置，所以大文件慢传不会被误杀。
+      pullTimeoutMs: 1800000
+      maxPullBytes: 536870912
+      maxTasksPerNode: 64
+      helloTimeoutMs: 10000
+
+    # remote_task 的默认任务超时（副机侧生效）。
+    defaults:
+      timeoutMs: 3600000
