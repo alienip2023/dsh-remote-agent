@@ -729,6 +729,31 @@ test('isDenied：空串 / 非字符串条目必须被跳过（否则两种平台
   // 混入非法条目时，合法的 deny 条目仍须正常生效
   assert.equal(isDenied(winPath, ['', 'C:\\work'], { caseInsensitive: true }), true)
   assert.equal(isDenied('/etc/passwd', ['', '/etc'], {}), true)
+
+  /**
+   * 【判别性断言 —— 纯空白条目】
+   *
+   * 为什么必须单独写这一组：上面那批断言里的**路径不含纯空白段**，
+   * 所以「跳过纯空白条目」这条守卫在不在，结果都是 false —— 断言恒真。
+   * 实测：把 `if (raw.trim() === '') continue` 删掉，上面全部断言仍然通过。
+   *
+   * 根因是 normalizePath **不做 trim**：normalizePath('   ') === '   '，
+   * 于是纯空白条目会走到相对分支、被当成一个合法的路径段参与匹配。
+   * 只有让**被测路径本身含纯空白段**，这条守卫的存在与否才可观测：
+   *   有守卫 → 纯空白条目被忽略 → false
+   *   无守卫 → 它匹配上路径里的空白段 → true
+   * 后一种行为是错的：用户误配一个空白条目不该变成"拒绝一切含空白段的路径"。
+   */
+  assert.equal(isDenied('/work/   /x', ['   '], {}), false, '纯空白条目必须被忽略（不能被当成路径段匹配上）')
+  assert.equal(isDenied('/work/\t/x', ['\t'], {}), false, '制表符条目同样必须被忽略')
+  assert.equal(isDenied('C:/w/   /a', ['   '], { caseInsensitive: true }), false, 'Windows 侧同样')
+  assert.equal(isDenied('/work/   /x', ['   ', '/etc'], {}), false, '混入空白条目不影响其他条目判定')
+  assert.equal(isDenied('/etc/passwd', ['   ', '/etc'], {}), true, '空白条目不得让同表的合法条目失效')
+
+  // 正向对照：同样的路径形态，用**非空白**条目必须能命中。
+  // 这条证明上面的 false 是"条目被忽略"而不是"路径根本没被检查"。
+  assert.equal(isDenied('/work/   /x', ['work'], {}), true, '对照：非空白条目对同一路径能命中')
+  assert.equal(isDenied('/work/\t/x', ['work'], {}), true, '对照：制表符路径同样能被正常条目命中')
 })
 
 /* ─────────────────── defaultRoots / detectPlatform ─────────────────── */
