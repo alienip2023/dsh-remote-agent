@@ -211,6 +211,11 @@ check('15d', 'KNOWN-ISSUES 第 2 节标记为已清理（与实现同步）',
 check('15e', 'KNOWN-ISSUES 第 6 节记录测试方法论',
   /##\s*6\.[^\n]*测试方法论/.test(known) && /与原实现等价/.test(known) && /U\+FFFD/.test(known),
   'KNOWN-ISSUES.md 第 6 节')
+// 第 7 节记录加固轮审计的剩余盲区（真机未覆盖的分支 / 设计取舍 / 自我纠正）。
+// 它同样是"删掉不会让测试变红"的经验文档，需要显式守卫。
+check('15f', 'KNOWN-ISSUES 第 7 节记录审计结论',
+  /##\s*7\.[^\n]*审计结论/.test(known) && /pwsh/.test(known) && /RELAY_QUEUE_BUDGET/.test(known),
+  'KNOWN-ISSUES.md 第 7 节')
 
 /* ── 16. client.js 契约 ── */check('16', 'PANEL_KEY 是单符号常量', /PANEL_KEY\s*=\s*'dsh-remote-agent'/.test(client), 'client.js')
 check('17', 'sidebar.panellist 用 id: PANEL_KEY', /id:\s*PANEL_KEY/.test(client), 'client.js')
