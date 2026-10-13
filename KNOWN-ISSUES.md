@@ -47,17 +47,27 @@ DSH 的 `MessageSourceMap`（`app.asar` 内 agent-loop 的 .d.ts）是**封闭�
 
 ---
 
-## 2. hub 层 `conn.socket.on('end')` 与冻结层修复重复
+## 2. ~~hub 层 `conn.socket.on('end')` 与冻结层修复重复~~ —— 已清理
 
-**状态**：已知冗余，推迟到 v0.1 之后清理。
+**状态**：**已清理**（v0.1 加固轮）。此处保留记录，供后续维护者理解为什么那层兜底**不该再补回来**。
 
-冻结层 `lib/ws.js` 已在 `WSConnection` 内统一处理对端硬断（`socket.on('end')`
-→ `finish(1006)` + destroy）。hub 的 `attachDirect` 里还留着一层等价的
-`socket.on('end')` 兜底。实测两者并存**行为完全正确**（`node offline` 触发 1 次、
-`socket closed` 触发 2 次、registry 最终状态正确），唯一可见差别是日志多打一条。
+背景：冻结层 `lib/ws.js` 在 `WSConnection` 构造时即挂 `socket.on('end')`
+→ `finish(1006)` + destroy，已统一处理对端硬断。hub 的 `attachDirect` 里曾另有一层
+等价的 `socket.on('end')` 兜底（在冻结层修好之前是必需的补丁）。两者并存时行为正确，
+唯一可见差别是**对端干净 FIN 时日志里 `node socket closed` 打两条**。
 
-**清理动作**：移除 `lib/hub/node-registry.js` 的 `attachDirect` 中
-`conn.socket.on('end')` 那一段及其注释，交由冻结层统一处理。
+清理动作（已完成）：移除 `lib/hub/node-registry.js` 的 `attachDirect` 中
+`conn.socket.on('end')` 那段及其注释，并在原处留下一条警告注释 ——
+**不要**再补这层兜底，否则会重现双日志。
+
+行为等价性已实测（三场景：硬断 destroy / 干净 FIN `end()` / 裸 socket FIN）：
+`online` 翻转恰好 1 次、`rec.conn` 清空、底层 socket `destroyed=true`、
+断连不清 tasks、同 nodeId 可重连、dispose 无残留、offline 延迟不变。
+另补测「hello 之前就 FIN」的 pending 清理面：`pendingAfter=0`、`pendingDoneFlag=true`，
+前后一致。唯一差异即上述双日志 → 单日志。
+
+relay 侧未动：`lib/relay.js` 的 close 处理器有 `rec.conn === conn` 守卫，
+属另一条路径（relay-e2e 不 import `NodeRegistry`）。
 
 ---
 

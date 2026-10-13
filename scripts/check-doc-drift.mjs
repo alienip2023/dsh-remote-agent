@@ -182,8 +182,32 @@ check('15b', 'handoffView 移除了 logs 与 workspace 键',
   })(),
   'lib/hub/views.js handoffView 函数体（花括号匹配，查 logs 与 workspace）')
 
-/* ── 16. client.js 契约 ── */
-check('16', 'PANEL_KEY 是单符号常量', /PANEL_KEY\s*=\s*'dsh-remote-agent'/.test(client), 'client.js')
+/* ── 15c. 已清理的冗余监听器不得被补回来 ──
+ *
+ * KNOWN-ISSUES 第 2 节记录过：hub 的 attachDirect 曾有一层 `conn.socket.on('end')`
+ * 兜底，在冻结层（ws.js）修好硬 FIN 处理之后变成冗余，唯一副作用是对端干净 FIN 时
+ * 'node socket closed' 日志打两条。清理已完成。
+ *
+ * 为什么要断言：这段兜底**看起来像是必要的防御**，后来者很容易"好心"补回来。
+ * 而它的旧注释（"只监听 close 会让死节点永远在线"）在冻结层修好后已经不成立，
+ * 属误导性注释。这条断言保证：要么代码里没有它，要么文档必须同步说明为什么有。
+ */
+const registrySrc = read('lib/hub/node-registry.js')
+const registryCode = stripComments(registrySrc)
+// ⚠ 正则形态踩过坑：第一版写 `conn\.socket\??\.on\??\(`，而 `\??` 是贪婪的 ——
+// 它会把 `socket?.on?.('end'` 里的 `?` 吃掉，剩下的 `?.on` 无法匹配紧跟的 `\.on`，
+// 于是**只认得 `conn.socket.on('end')` 这种不带可选链的写法**，对真实代码
+// （`conn.socket?.on?.('end'`）反而漏报。实测：注入回旧实现后断言仍报 OK —— 守了个空。
+// 现在改成「conn.socket 到 ('end' 之间只允许可选链符号与空白」，覆盖所有写法。
+const SOCKET_END_RE = /conn\.socket[^;\n]{0,24}\(\s*['"`]end['"`]/
+check('15c', 'hub 不再补 socket "end" 兜底（冻结层已统一处理）',
+  !SOCKET_END_RE.test(registryCode),
+  'lib/hub/node-registry.js attachDirect（已剥注释）')
+check('15d', 'KNOWN-ISSUES 第 2 节标记为已清理（与实现同步）',
+  /##\s*2\.[^\n]*已清理/.test(known),
+  'KNOWN-ISSUES.md 第 2 节标题')
+
+/* ── 16. client.js 契约 ── */check('16', 'PANEL_KEY 是单符号常量', /PANEL_KEY\s*=\s*'dsh-remote-agent'/.test(client), 'client.js')
 check('17', 'sidebar.panellist 用 id: PANEL_KEY', /id:\s*PANEL_KEY/.test(client), 'client.js')
 check('18', 'main 用 key: PANEL_KEY', /key:\s*PANEL_KEY/.test(client), 'client.js')
 check('19', 'client 侧 API 前缀与 Host 一致',
