@@ -23,6 +23,10 @@ const ROOT = path.resolve(import.meta.dirname, '..')
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8')
 
 const uiRoutes = read('lib/hub/ui-routes.js')
+// views.js 是投影共享层（工具路径与 UI 路径共用一份白名单）。
+// handoffView/changedView/taskView 等在它里面，不在 ui-routes.js。
+const views = read('lib/hub/views.js')
+const hubTools = read('lib/hub/tools.js')
 const hubIndex = read('lib/hub/index.js')
 const client = read('lib/client.js')
 const readme = read('profiles/README.md')
@@ -52,6 +56,19 @@ function bodyOf(src, fnName) {
     }
   }
   return src.slice(start)
+}
+
+/**
+ * 剥掉块注释与行注释，只留代码。
+ *
+ * 为什么需要：t9 在注释里写了反例说明「为什么不能 `{ handoff: t.handoff }` 直接回」。
+ * 不剥注释时，这句反例会被"裸直出"断言当成真代码命中 —— 造成**假阳性**
+ * （干净代码报告漂移）。假阳性比漏报更糟：它会让人开始无视这个脚本。
+ */
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
 }
 
 /* ── 1. /overview 字段 + capabilities 三项 ── */
@@ -124,17 +141,34 @@ check('13', '文档提到路由自带同源/鉴权围栏',
   /围栏/.test(readme),
   'profiles/README.md 第 4 节')
 
-/* ── 14. handoff 投影（t9 新增 handoffView） ── */
-check('14', 'handoff 经 handoffView 投影（不直出副机对象）',
-  /function handoffView/.test(uiRoutes) && /handoff:\s*handoffView\(/.test(uiRoutes),
-  'ui-routes.js')
+/* ── 14. handoff 投影 ──
+ *
+ * ⚠ 投影函数已从 ui-routes.js 提取到 lib/hub/views.js（共享层，见该文件说明）。
+ * 断言相应改为读 views，并**新增两条**：投影必须真的被两条消费路径调用 ——
+ * 这正是重构前漏掉的那半条加固（remote_handoff 曾裸直出 t.handoff）。
+ */
+check('14', 'handoffView 定义在共享层 views.js',
+  /export function handoffView/.test(views),
+  'lib/hub/views.js')
+check('14b', 'UI 路径调用 handoffView',
+  /handoff:\s*handoffView\(/.test(uiRoutes),
+  'ui-routes.js 调用点')
+// 关键回归：工具路径也必须走投影。
+// 工具返回值会进入会话日志，被后续每个请求带上 —— 比 UI 那条路径更该加固。
+check('14c', '工具路径（remote_handoff）调用 handoffView，不裸直出',
+  /handoff:\s*handoffView\(/.test(hubTools) && !/handoff:\s*t\.handoff\s*[,}]/.test(stripComments(hubTools)),
+  'lib/hub/tools.js')
+// 同理：registry.taskView（remote_status 用它）必须走共享投影，
+// 不能逐字段裸拷贝副机上报的 exit/changed/summary/error。
+check('14d', 'registry.taskView 走共享投影（remote_status 不裸拷贝）',
+  /taskProjection\(/.test(read('lib/hub/node-registry.js')),
+  'lib/hub/node-registry.js')
+
 // 直出形态是代码里的 `handoff: t.handoff`，不是注释里的反例说明。
 // 两处踩过的坑：(a) `\b` 在 `)` 前也成立，把 `handoff: handoffView(t.handoff)`
 // 误判为直出；(b) 不剥注释时，t9 写的「为什么不能 `{ handoff: t.handoff }` 直接回」
 // 这句注释会被当成真代码。所以先剥注释，再匹配。
-const uiRoutesCode = uiRoutes
-  .replace(/\/\*[\s\S]*?\*\//g, '')   // 块注释
-  .replace(/^\s*\/\/.*$/gm, '')        // 行注释
+const uiRoutesCode = stripComments(uiRoutes)
 check('15', 'handoff 无裸直出（handoff: t.handoff）',
   !/handoff:\s*t\.handoff\s*[,}]/.test(uiRoutesCode),
   'ui-routes.js 代码区（已剥注释）')
@@ -143,10 +177,10 @@ check('15b', 'handoffView 移除了 logs 与 workspace 键',
     // 用花括号匹配取完整函数体，且**两个键都要查**。
     // 早先的写法有两个问题：(a) 900 字符固定窗口只覆盖函数体 40%；
     // (b) 标签说查 logs 与 workspace，正则却只查了 logs。
-    const body = bodyOf(uiRoutes, 'handoffView')
+    const body = bodyOf(views, 'handoffView')
     return body !== '' && !/^\s*logs:/m.test(body) && !/^\s*workspace:/m.test(body)
   })(),
-  'ui-routes.js handoffView 函数体（花括号匹配，查 logs 与 workspace）')
+  'lib/hub/views.js handoffView 函数体（花括号匹配，查 logs 与 workspace）')
 
 /* ── 16. client.js 契约 ── */
 check('16', 'PANEL_KEY 是单符号常量', /PANEL_KEY\s*=\s*'dsh-remote-agent'/.test(client), 'client.js')

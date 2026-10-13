@@ -20,7 +20,10 @@ import test from 'node:test'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const SCRIPT_REL = 'scripts/check-doc-drift.mjs'
+// 注入目标：默认 ui-routes.js（guard 等断言在那里）。
+// handoffView 相关的断言已随投影搬到 lib/hub/views.js，用 VIEWS_REL 注入。
 const TARGET_REL = 'lib/hub/ui-routes.js'
+const VIEWS_REL = 'lib/hub/views.js'
 
 /** 把整个包复制到临时目录（只复制检查所需的子集，避免拷 node_modules）。 */
 function makeCopy(t) {
@@ -73,10 +76,15 @@ function runCheck(dir) {
   }
 }
 
-/** 在副本的目标文件上做一次字符串替换/插入，然后跑检查。 */
-function probe(t, mutate) {
+/**
+ * 在副本的目标文件上做一次字符串替换/插入，然后跑检查。
+ * @param {object} t
+ * @param {(src:string)=>string} mutate
+ * @param {string} [rel] 目标文件，默认 ui-routes.js；handoffView 相关传 views.js
+ */
+function probe(t, mutate, rel = TARGET_REL) {
   const dir = makeCopy(t)
-  const target = path.join(dir, TARGET_REL)
+  const target = path.join(dir, rel)
   const original = fs.readFileSync(target, 'utf8')
   const mutated = mutate(original)
   assert.notEqual(mutated, original, '注入未生效（mutate 没改动文本）—— 用例本身失效，需修断言而非放宽')
@@ -138,30 +146,63 @@ test('自检：干净副本必须通过（脚本不是"永远失败"）', (t) =>
   const dir = makeCopy(t)
   const { code, out } = runCheck(dir)
   assert.equal(code, 0, `干净副本应 exit 0，实际 ${code}：\n${out.slice(0, 500)}`)
-  assert.match(out, /39\/39 一致|一致/, '应报告全部一致')
+  assert.match(out, /一致/, '应报告全部一致')
 })
 
+// handoffView 已随投影提取到 lib/hub/views.js，所以注入目标改为那个文件。
+// 这本身是被这次重构暴露的维护点：**投影搬到哪，自检就要跟到哪** ——
+// 否则注入落在一个不再被断言的函数上，测试"通过"但守了个空。
 test('自检：handoffView 函数尾部注入 logs 必须被检出（防 900 字符窗口回归）', (t) => {
   // 旧断言用 slice(idx, idx+900) 固定窗口，而函数体 2260 字符 —— 尾部注入会漏。
   // 这里用「函数体定位 + 锚点唯一断言」而不是裸 indexOf('return {')，
-  // 因为 'return {' 在本文件出现 11 次，裸 indexOf 可能注错函数（relay-cli 踩过）。
-  const { code, out } = probe(t, (src) => insertIntoFunctionBody(src, 'handoffView', 'logs: h.logs,'))
+  // 因为 'return {' 在文件里出现多次，裸 indexOf 可能注错函数（relay-cli 踩过）。
+  const { code, out } = probe(
+    t,
+    (src) => insertIntoFunctionBody(src, 'handoffView', 'logs: h.logs,'),
+    VIEWS_REL,
+  )
   assert.equal(code, 1, `尾部注入 logs 应被检出（exit 1），实际 exit ${code}`)
   assert.match(out, /\[15b\]/, '应报出 15b')
 })
 
 test('自检：handoffView 内部注入 workspace 必须被检出（防"只查一个键"回归）', (t) => {
   // 旧断言标签说查 logs 与 workspace，正则却只查了 logs
-  const { code, out } = probe(t, (src) => insertIntoFunctionBody(src, 'handoffView', 'workspace: h.workspace,'))
+  const { code, out } = probe(
+    t,
+    (src) => insertIntoFunctionBody(src, 'handoffView', 'workspace: h.workspace,'),
+    VIEWS_REL,
+  )
   assert.equal(code, 1, `内部注入 workspace 应被检出，实际 exit ${code}`)
   assert.match(out, /\[15b\]/, '应报出 15b')
+})
+
+test('自检：工具路径裸直出 handoff 必须被检出（防 remote_handoff 回退）', (t) => {
+  // 这是本次修复的核心回归点：remote_handoff 曾裸直出 `handoff: t.handoff`。
+  // 注入回那个形态，14c 必须报出。
+  const { code, out } = probe(
+    t,
+    (src) => src.replace(/handoff:\s*handoffView\(t\.handoff\)/, 'handoff: t.handoff'),
+    'lib/hub/tools.js',
+  )
+  assert.equal(code, 1, `工具路径裸直出应被检出，实际 exit ${code}`)
+  assert.match(out, /\[14c\]/, '应报出 14c')
+})
+
+test('自检：registry.taskView 回退成裸拷贝必须被检出', (t) => {
+  const { code, out } = probe(
+    t,
+    (src) => src.replace(/const base = taskProjection\(/, 'const base = ((x) => x)('),
+    'lib/hub/node-registry.js',
+  )
+  assert.equal(code, 1, `taskView 绕过共享投影应被检出，实际 exit ${code}`)
+  assert.match(out, /\[14d\]/, '应报出 14d')
 })
 
 test('自检：注入锚点必须唯一（防重构后注错位置产生假绿）', (t) => {
   // relay-cli 的建议落地：若锚点不再唯一，注入会落到别的函数上，
   // 断言仍"通过"但实际守了个空。这里显式验证 helper 会 fail。
-  const src = fs.readFileSync(path.join(ROOT, TARGET_REL), 'utf8')
-  // 'return {' 出现 11 次，必须被判为不唯一
+  const src = fs.readFileSync(path.join(ROOT, VIEWS_REL), 'utf8')
+  // 'return {' 出现多次，必须被判为不唯一
   assert.throws(() => assertUniqueAnchor(src, 'return {'), /锚点必须唯一/, "'return {' 不唯一，应抛错")
   // 具名函数锚点当前唯一
   assert.doesNotThrow(() => assertUniqueAnchor(src, 'function handoffView'), '具名函数锚点应唯一')
