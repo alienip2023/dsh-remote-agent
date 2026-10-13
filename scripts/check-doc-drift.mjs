@@ -75,12 +75,21 @@ check('5', '文档说明了两层空值差异（配置层 \'\' vs API 层 null�
 
 /* ── 6. 7 条路由路径 ── */
 const UI_PREFIX = '/api/remote-agent/ui'
-for (const seg of ['overview', 'nodes', 'tasks', 'task', 'dispatch', 'cancel', 'pull']) {
+for (const seg of ['overview', 'nodes', 'tasks', 'task', 'dispatch', 'cancel', 'pull', 'config']) {
   check(`6.${seg}`, `路由 ${UI_PREFIX}/${seg} 已注册`,
     uiRoutes.includes(`\${UI_API_PREFIX}/${seg}`) || uiRoutes.includes(`${UI_PREFIX}/${seg}`),
     'ui-routes.js route 注册')
 }
 check('7', 'UI_API_PREFIX 常量值正确', uiRoutes.includes(`'${UI_PREFIX}'`), 'ui-routes.js:23 附近')
+
+// /config 是只读的配置视图。断言两条不变量：
+//   ① 凭证只以 `*Set` 布尔形式出现（绝不能有明文 token 回给浏览器）
+//   ② 客户端读的字段名与 Host 返回的一致（不一致会让面板显示空白但不报错）
+check('7a', '/config 只回凭证的 set 布尔，不回明文',
+  /nodeTokenSet:/.test(uiRoutes) && /relayTokenSet:/.test(uiRoutes) && !/nodeToken:\s*typeof config\.nodeToken/.test(uiRoutes),
+  'ui-routes.js configView')
+check('7b', 'client 读 nodeTokenSet（与 Host 字段对齐）',
+  /cfg\.nodeTokenSet/.test(client), 'client.js 设置区')
 
 /* ── 8. 方法约束 ── */
 check('8', 'GET 路由拒绝非 GET', /method !== 'GET'/.test(uiRoutes), 'ui-routes.js 各 GET route')
