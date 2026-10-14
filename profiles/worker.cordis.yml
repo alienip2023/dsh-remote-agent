@@ -23,6 +23,14 @@
 # 关闭本插件：给该行加 `disabled: true`（同 id），不要删文件。
 - id: remote-agent
   name: dsh-remote-agent
+  # ⚠ 副机**必须**清空 inject。
+  #
+  # 包内 cordis.patch.yml 给这一行声明了 `inject: ['webServer','tools','systemPrompt']`
+  # —— 那是 hub 需要的服务。而副机 profile 里**没有这些服务**，若不清空，这一行会
+  # 一直停在 PENDING **永远不激活**，副机也就永远不拨入 hub。
+  #
+  # loader 按 id 覆盖：这里写 `inject: []` 就覆盖掉包内的声明。
+  inject: []
   config:
     role: worker
 

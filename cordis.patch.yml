@@ -35,8 +35,30 @@
 # 对一个"刚装好还没配置"的 profile 来说噪声更大。所以默认取 hub。
 #
 # 关闭本插件：给该行加 disabled: true，而不是删掉这个文件。
+#
+# ── 为什么这里要声明 inject（重要，别删）────────────────────────────
+# cordis 的防护：**没有声明 inject 就不能访问服务** —— 直接读 `ctx.webServer`
+# 会抛 `cannot get property "webServer" without inject`（实测）。
+#
+# 而"运行时用 ctx.inject(deps, cb) 拿服务"这条路走不通：inject 返回的是 thenable
+# fiber，要 await 才算加载完成；而插件的 apply 是同步的，父 fiber 同步返回后框架
+# 会清理尚未 settle 的子 fiber —— 实测注册成功 13ms 后出现
+# `DISPOSED (fiber unloaded)`，路由被删且不再回来（面板 404/401，启动日志无异常）。
+#
+# 所以在**行上**声明 inject：框架会**推迟本行的激活**直到这些服务就绪，只 apply
+# 一次、没有子 fiber 抖动。这是唯一被验证可用的形态。
+#
+# 副作用与取舍：worker（副机）不需要 webServer/tools/systemPrompt。若副机 profile
+# 里没有这些服务，本行会一直 PENDING 而不激活 —— 所以**副机必须覆盖掉这个 inject**：
+#     - id: remote-agent
+#       inject: []          # ← 副机加这一行清空依赖
+#       config:
+#         role: worker
+#         ...
+# 见 profiles/worker.cordis.yml。
 - insert:
     - id: remote-agent
       name: dsh-remote-agent
+      inject: ['webServer', 'tools', 'systemPrompt']
       config:
         role: hub

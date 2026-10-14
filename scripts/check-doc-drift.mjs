@@ -135,8 +135,21 @@ check('11', '存在请求围栏 makeGuard',
 // `rejection = 403`，所以必须**锚定 catch 分支那一处**。
 check('12', '围栏失败关闭（不静默放行）',
   /failing closed[\s\S]{0,200}?\n\s*rejection = 403\b/.test(uiRoutes)
-  && /if \(!guard\(req, res, pathname\)\) return/.test(uiRoutes),
-  'ui-routes.js guard catch 分支（行首赋值）+ 调用点')
+  // 调用点：必须「guard 为假即返回」，但**允许中间夹诊断日志**。
+  // 早先写成 `if \(!guard\(req, res, pathname\)\) return` 的单行精确匹配 ——
+  // 后来给拒绝路径加了一行 log（`if (...) { log(...); return }`），语义没变
+  // （仍是失败关闭）却让断言变红。断言该锚定**语义**而非字面形态：
+  // 现在要求「guard 之后、handler 调用之前必须出现 return」，
+  // 即无论中间夹什么，拒绝路径都不得继续执行 handler。
+  && (() => {
+    const i = uiRoutes.indexOf('if (!guard(req, res, pathname))')
+    if (i < 0) return false
+    const rest = uiRoutes.slice(i, i + 400)
+    const retIdx = rest.indexOf('return')
+    const handlerIdx = rest.indexOf('await handler(req, res)')
+    return retIdx > 0 && (handlerIdx < 0 || retIdx < handlerIdx)
+  })(),
+  'ui-routes.js guard catch 分支（行首赋值）+ 调用点（失败即 return，允许夹日志）')
 check('13', '文档提到路由自带同源/鉴权围栏',
   /围栏/.test(readme),
   'profiles/README.md 第 4 节')

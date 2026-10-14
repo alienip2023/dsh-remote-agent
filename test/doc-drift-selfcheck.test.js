@@ -218,8 +218,12 @@ test('自检：失败关闭改成失败放行必须被检出（防"两个词存�
 })
 
 test('自检：删掉 guard 调用点必须被检出', (t) => {
+  // 锚点要能匹配「单行 return」与「多行 { log; return }」两种形态。
+  // 早先写死 `if (!guard(...)) return`；后来给拒绝路径加了一行诊断日志，
+  // 锚点失配 → 本用例报「注入未生效」。那正是自检该有的行为（拒绝静默失真），
+  // 但锚点本身也得跟着实现走 —— 用正则匹配整个 if 块。
   const { code, out } = probe(t, (src) =>
-    src.replace(/if \(!guard\(req, res, pathname\)\) return/, '/* removed */'))
+    src.replace(/if \(!guard\(req, res, pathname\)\) \{[\s\S]*?\n\s*\}/, '/* removed */'))
   assert.equal(code, 1, `删 guard 调用应被检出，实际 exit ${code}`)
   assert.match(out, /\[12\]/, '应报出 12')
 })
