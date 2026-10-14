@@ -185,19 +185,279 @@ combo 形式、`rev` 必需，且 URL 由首页 manifest 提供，不应手工�
 
 审计覆盖六个面。**结论：无 BLOCKER**；以下是如实记录的边界，供后续决策。
 
-### 7.1 真机未覆盖的分支（部署前值得知道）
+### 7.1 真机未覆盖的分支（t2 实测复核版）
 
-- **`resolvePowerShell()` 的前两条优先级分支从未在真机验证**。本机 PATH 无
-  `pwsh`、`DSH_REMOTE_PWSH` 未设，只有 PS 5.1（5.1.26100.9444），因此走的是
-  第三条回退分支。若副机装有 pwsh 7，前两条路径（常见安装位置 → PATH 上的
-  `pwsh`）在本环境**未被真机覆盖**（逻辑有测试，但用的是假 PATH）。
-- **POSIX/Linux 的 chmod / icacls 分支未实测**：`relay-config.test.js` 里那条
-  `skip` 就是它（Windows 无 chmod 语义）。中继部署到 Linux VPS 时这是**第一次
-  真机执行**。
-- **relay 模式的断连未复现**：加固轮的断连验证（4 场景 38 项断言）针对 direct
-  的 `attachDirect`；`relay.js` 未改动，且 `relay-e2e` 不 import `NodeRegistry`。
+> **本节已由 t2 逐条实测复核。** 三条原始表述中，第三条**结论错误**（relay 断连
+> 实际已覆盖），第一、二条**范围描述不准**（把"真机未验"与"逻辑未验"混为一谈）。
+> 下方为修正版，保留必要的谨慎。复核环境：Windows 11 26100、Node v24.18.0、
+> PS 5.1.26100.9444、本机无 pwsh 7。原始命令与输出见任务 t2 的输出。
+
+- **`resolvePowerShell()` 的前两条分支：选择逻辑已用真实解析路径验，真机仍未验。**
+
+  本机事实（实测）：`resolveOnPath('pwsh.exe')` 与 `resolveOnPath('pwsh')`
+  **均为空串**；`DSH_REMOTE_PWSH` **未设置**
+  （`Object.hasOwn(process.env, …) === false`）；只有 PS 5.1.26100.9444；
+  最终解析到 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+  —— 走的是第三条回退分支。
+
+  本次补验的**不只是**"假 PATH 单元测试"：在临时目录里造出**真 PE 文件**的
+  `pwsh.exe`（复制 PS 5.1 二进制后改名，`size = 495616`），
+  经真实 `resolvePowerShell()` 路径实测六个分支：
+
+  | 场景 | 期望 | 实测结果 |
+  |---|---|---|
+  | 常见安装位置存在 + PATH 上也有 pwsh | 取安装位置 | ✔ 取 `<PF>\PowerShell\7\pwsh.exe` |
+  | 无安装位置；**同一目录内**同时有 `pwsh.exe` 与 `powershell.exe` | 取 pwsh 而非 5.1 | ✔ 取 `<PATH>\pwsh.exe`（`resolveOnPath` 对两者各自命中，最终选中 pwsh） |
+  | 仅 `%LOCALAPPDATA%\Microsoft\WindowsApps` 绝对位置 | 取该位置 | ✔ 命中 |
+  | PATH 上 pwsh 为 0 字节 + 其后有真 pwsh | 跳过 0 字节 | ✔ 跳过，回退到真候选 |
+  | `DSH_REMOTE_PWSH` 显式指定（含首尾空白） | 原样采用 | ✔ 采用，`fromEnv: true` |
+  | 六处全部缺失 | 字面量兜底 | ✔ 返回 `'powershell.exe'` |
+
+  并经 `buildSpawn` 走完整 spawn 链路（`-NoProfile -NonInteractive
+  -ExecutionPolicy Bypass -File <tmp>/run.ps1`），**两条 pwsh 分支各跑 5 次**：
+  脚本真的执行、stdout 有输出、`exit 7` 如实传递为 `status === 7`
+  —— 安装位置分支与 PATH 分支**均 5/5 一致**。
+
+  ⚠ 复现这套探针时的一个坑：**不要伪造 `SystemRoot`**。把 `SystemRoot` 指向一个
+  不存在的临时目录（`exec.test.js` 的 `isolateResolution` 就是这么做的，因为它
+  只断言解析结果、不真的 spawn），解析仍然正确，但 spawn 出来会返回
+  `4294901760`（`0xFFFF0000`）且 stdout/stderr 全空 —— 看起来像"退出码传递坏了"，
+  实际是 PowerShell 自己起不来。这是**夹具假象，不是产品缺陷**：实测同一夹具下
+  只把 `SystemRoot` 换回真实的 `C:\Windows`，立刻恢复 `status === 7` +
+  `stdout === 'ok-marker'`。本次探针因此**刻意保留真实 `SystemRoot`**，
+  只隔离 `ProgramFiles` / `ProgramFiles(x86)` / `LOCALAPPDATA` / `PATH`。
+
+  **仍未验的部分**：真实 pwsh 7 二进制在真实安装路径下的行为 ——
+  `-File` + BOM 的编码路径、`$PSHOME`、profile 加载、与 PS 5.1 的 `$LASTEXITCODE`
+  语义差异。本机没有 pwsh 7，这部分无法在本环境验。补验步骤见本节末
+  「补验方法 B」。
+
+  **顺带查出一条未覆盖边界（非缺陷，但值得知道）**：`resolveOnPath()` 有
+  「Windows 上 0 字节候选视为不存在」的守卫，但 `resolvePowerShell()` 的
+  **绝对安装位置分支只有 `fs.existsSync()`，没有这道守卫**。实测：把 0 字节
+  `pwsh.exe` 放在 `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe` 这个绝对位置 →
+  `resolvePowerShell()` 采用它，`describePowerShell()` 报 `exists: true` /
+  `family: 'pwsh-7'`，而 spawn 该路径抛 `EFTYPE`（errno -4028）—— 正是
+  `lib/node/exec.js` 注释里说要消灭的那类「解析出来但用不了」。
+
+  **但本机碰不到这个坑，且 `exec.js` 注释里的实测依据与本机行为不符**：
+  本机 `%LOCALAPPDATA%\Microsoft\WindowsApps` 下 **23 个 App Execution Alias
+  全部 `existsSync() === false`** —— `lstatSync` 可读（size 41–173）、
+  `statSync` 抛 `EACCES`；PowerShell `Test-Path` 为 True、`Get-Item` 显示
+  `Length=0, Attributes=Archive, ReparsePoint`；`fsutil reparsepoint query`
+  确认 tag `0x8000001b`。即「别名 0 字节 → `existsSync` 返回 true → spawn
+  `EFTYPE`」这条链在本机**第一环就不成立**（`existsSync` 是 false，
+  该别名根本不会被选中）。符合注释描述的是 0 字节**普通文件**（非重解析点）：
+  实测 `existsSync === true` + `size === 0` + spawn `EFTYPE`。
+  结论：0 字节守卫对「普通 0 字节文件」有效且必要；对「真实别名」本机是靠
+  `existsSync` 为 false 自然跳过 —— **两条路径不同，注释把两者合并叙述了**。
+  换机器或换 Windows 版本（别名行为可能不同）时，绝对分支缺守卫这点仍会暴露。
+
+- **POSIX/Linux 的 chmod 分支未实测（这一条原表述基本准确，但有两处要改准）。**
+
+  实测确认 skip 的**确切条件与跳过内容**：条件为
+  `process.platform === 'win32'`，位于用例
+  「`restrictPermissions：posix 语义下目标模式真的生效`」开头，跳过的正是两条
+  断言 —— `fs.statSync(file).mode & 0o777 === 0o600`（文件）与
+  `fs.statSync(dir).mode & 0o777 === 0o700`（目录）。本机实测
+  `fs.chmodSync(f, 0o600)` 不抛、读回 `mode & 0o777` 恒为 `0o666`
+  （Windows 只映射只读位），故该断言在 Windows 上必然失败，**skip 是正确的**
+  （`relay-config.test.js` 本机 36 例：35 pass / 1 skip / 0 fail）。
+
+  **改准之一：`restrictPermissions` 的 Linux 行为不止是代码推理。** 本次用真实
+  调用序列做了平台无关部分的可观测验证（对 `fs.chmodSync` 打桩记录
+  `(target, mode)`）：
+  - 创建路径：`chmod(dir, 0700)` → `chmod(tmp, 0600)` → `chmod(tokens.json, 0600)`
+  - 读取路径：**只** `chmod(tokens.json, 0600)`，**不碰目录**
+  - `chmodSync` 抛 `EPERM` 被 `catch` 吞掉，函数正常返回（不抛）
+
+  实现用 `fs.chmodSync`（同步、**显式 mode**），因此**不受 umask 影响**。
+  umask 只影响两处**创建时**的默认权限 —— `writeFileSync(tmp, …,
+  { mode: 0o600 })` 与 `mkdirSync(dir, { recursive: true })` —— 而这两处随后
+  都被显式 `chmodSync` 覆盖，所以最终权限与 umask 无关。
+  真正未验的只剩最后一步：「POSIX 内核真的把 mode 落成了 0600/0700」
+  （需要 Linux 文件系统，Windows 无 chmod 语义）。补验步骤见「补验方法 A」。
+
+  **改准之二：那条目录断言的归因错了。** 用例里 `dir` 来自 `tmpdir(t)`
+  （`fs.mkdtempSync`），而调用的是 `restrictPermissions(file)` —— **只传了文件**。
+  所以 `dir` 为 0700 是 **`mkdtemp` 的默认模式**带来的，**不是**
+  `restrictPermissions` 的目录分支。`restrictPermissions(dir, { isDir: true })`
+  的 0700 分支另有用例覆盖（「任何平台都不抛，且对目标调用 chmod 0600 /
+  目录 0700」，断言传参 `0o700`，该用例在 Windows 上也真跑）。
+  这条断言在 Linux 上会通过，但它通过的原因与 `restrictPermissions` 无关 ——
+  在 Linux 上补验时不要把它当成目录分支已验的证据。
+
+- **hub 侧 `RelayLink` 的状态机没有测试（原表述「relay 模式的断连未复现」结论错误）。**
+
+  实测复核：`relay-e2e.test.js` **确实覆盖了 relay 侧的断连**（24 例全绿），
+  断连相关 4 条 ——「node 断开后 hub 收到 `node/offline`，注册表释放该节点」、
+  「node 硬断（不发 close 帧）也清理」、「hub 断开不影响 node 与其余 hub」、
+  「`kickNode` 主动断开节点」。且 `hub-worker-e2e.test.js` 走 **relay 模式** +
+  真 `applyHub`（`NodeRegistry`）+ 真 `applyWorker`（**在干净 `HEAD` 树上**
+  8 例全绿），含「副机掉线后 hub 只翻 online，任务投影保留」—— 即
+  **`NodeRegistry` 走 relay 的路径已被端到端覆盖**。原表述里「`relay-e2e` 不
+  import `NodeRegistry`」是事实，但由它推不出「relay 断连未覆盖」：覆盖来自
+  `hub-worker-e2e` 与 `relay-e2e` 两条**不同**的路径，前者恰好就是
+  `NodeRegistry` 那条。
+
+  **真实缺口更窄**：是 **`RelayLink` 这个类本身** —— hub 作为中继客户端的那半边
+  状态机：`start()` 幂等、`connectOnce()` 并发闸门、重连指数退避 + 抖动 + 60s
+  封顶、`attempt` 成功后归零、`stop()` 幂等且不再重连、`requestNodeList()`
+  对齐节点目录、`describe()` 不泄 token。
+
+  说准确一点：`RelayLink` **不是零执行** —— `hub-worker-e2e` 的 7 条 relay 模式
+  用例经 `applyHub` 真的实例化了它、调了 `start()`、连上了中继，所以「连上 →
+  收帧 → 按 `from`/`to` 路由」这条 happy path 是被端到端跑过的。
+  缺的是**状态机的分支与边界**：重连退避、`attempt` 归零、`start()`/`stop()`
+  幂等、并发重入、`stop()` 后不再重连、节点目录对齐在重连时的行为。
+  这些分支在 7 条端到端用例里都走不到（它们全程保持连接不抖）。
+
+  **该缺口现已由 t1 关闭**：`test/relay-link.test.js`（29 例）覆盖上述全部分支，
+  实测 **29/29 通过**；`hub-worker-e2e` 8/8、`relay-e2e` 24/24、`ui-routes` 21/21
+  同时全绿。t1 在此过程中测出并修掉两个真缺陷：`start()` 不幂等 +
+  `connectOnce()` 无重入闸门导致的**孤儿连接泄漏**，以及**陈旧连接的 `close`
+  会清掉当前连接**（把「已连上的新连接」伪造成「掉线」）。
+
+  ⚠ **一条过程记录（方法论，值得留下）**：t1 交付后，中途出现过一版
+  **阻断级回归** —— `start()` 里的 `this.stopped = false` 被删掉（而同文件
+  155–167 行的注释恰好在强调这一行**必须**存在），于是 `connectOnce()` 首行的
+  `if (this.stopped) return` 恒真、**hub 永不连上中继**。
+
+  **归因（已核实，勿再误传）**：这一行是 **captain** 在做「独立验证 t1 的变异
+  测试声明」时删掉的，**不是 t1 的交付缺陷**。captain 的注入脚本设计为
+  「注入 → 跑测试 → 还原」，但该次运行超时被 kill，`fs.writeFileSync(FILE,
+  original)` 的还原语句没执行到 —— 于是注入形态被永久留在工作区。captain 随后
+  又基于这个被自己改坏的状态去质疑 t1，是双重错误。
+
+  t2 在做本节复核时独立抓到了这个中间态并给出证据链：
+  - 最小复现：`start()` 后 `stopped` 仍为 `true`、1.5s 后 `ready === false`、
+    `relay.hubs.size === 0`；
+  - 套件层：`relay-link.test.js` 当时 **19/29 失败**，其中
+    「`start 后连上中继`」直接报 `AssertionError: start 后 stopped=false
+    true !== false`（**测试断言与实现互相矛盾**，排除环境因素）；
+    `hub-worker-e2e` 由 8/8 退化为超时失败，`ui-routes` 由 21/21 退化为 1 例失败；
+  - 归因：用「干净 `HEAD` 树 + 只换入这一个文件」钉死到该文件，
+    干净树上这两个套件分别 8/8、21/21 全绿。
+  captain 补回该行后全部恢复绿：`relay-link.test.js` **29/29、4.2 秒自然退出**，
+  全量 **381 tests / 380 pass / 0 fail / 1 skip**（提交 `5c672e5`）。
+
+  **留下的教训**（三条，都是这一件事暴露的）：
+  1. **变异验证里「还原」比「注入」更危险** —— 注入失败会立刻报错，**还原不
+     干净是静默的**。还原后必须做字节级校验（哈希 + 长度），不能只靠"我写了
+     还原代码"。（同 §6.3）
+  2. **注释写了「必须这样做」不等于代码真的做了** —— 这类矛盾只有真跑一遍才
+     暴露。而反过来也成立：**不能因为注释在，就假设代码对**。
+  3. **怀疑别人的交付物前，先确认自己的验证工具没改坏被测对象** —— captain
+     在这件事上连错两次（先删了代码、再拿坏状态去质疑）。这也是 §6.4
+     「工具本身会污染观测」的实例：验证者必须先自证其工具无副作用。
+
+  **另：原表述引用的「加固轮的断连验证（4 场景 38 项断言）」在本仓库中没有
+  可核实的对应物** —— 没有提交过的探针脚本，`git log` 里也没有。
+  这类不可复现的数字不应作为论据写入文档。断连覆盖应引用可执行的用例名
+  （上列 4 条 + `hub-worker-e2e` 那条）。
+
+#### 补验方法 A：Linux 中继 VPS 部署后执行
+
+> ⚠ **别用 `mktemp -d` 验目录权限**：`mkdtemp(3)` 本身就按 **0700** 创建目录
+> （man-pages: *"The directory is then created with permissions 0700"*），
+> 于是 `stat` 出来的 700 是 `mktemp` 给的，**不是** `restrictPermissions` 给的 ——
+> 断言会假绿。要验目录分支，必须先把目录 chmod 成别的值（下面第 3、4 步用 `0755`），
+> 或直接验"读取路径**不**碰目录"这个可区分的行为（第 6 步）。
+
+```bash
+cd /path/to/dsh-remote-agent
+
+# 1) 那条 skip 现在必须真的执行并通过（不再是 "﹣"，而是 "✔"）
+node --test --test-name-pattern='posix 语义下目标模式真的生效' test/relay-config.test.js
+
+# 2) 手工复现文件断言（不依赖测试框架）
+D=$(mktemp -d)
+node --input-type=module -e '
+import fs from "node:fs"
+import { restrictPermissions } from "./lib/relay-config.js"
+const f = process.argv[1] + "/cred.txt"
+fs.writeFileSync(f, "secret", { mode: 0o644 })
+console.log("before     :", (fs.statSync(f).mode & 0o777).toString(8))
+restrictPermissions(f)
+console.log("file after :", (fs.statSync(f).mode & 0o777).toString(8), "(期望 600)")
+' "$D"
+
+# 3) 目录分支：先把目录改成 0755，再调 restrictPermissions(dir,{isDir:true})
+D1=$(mktemp -d); chmod 0755 "$D1"
+node --input-type=module -e '
+import fs from "node:fs"
+import { restrictPermissions } from "./lib/relay-config.js"
+const d = process.argv[1]
+console.log("before:", (fs.statSync(d).mode & 0o777).toString(8), "(期望 755)")
+restrictPermissions(d, { isDir: true })
+console.log("after :", (fs.statSync(d).mode & 0o777).toString(8), "(期望 700)")
+' "$D1"
+
+# 4) 走真实 CLI：目录**故意先建成 0755**，才能证明是代码收窄的而非 mktemp 的
+D2=$(mktemp -d); chmod 0755 "$D2"
+node bin/dsh-remote-relay.js --port 0 --host 127.0.0.1 --data-dir "$D2" &
+sleep 2; stat -c '%a %n' "$D2" "$D2/tokens.json"; kill %1
+# 期望：700 <dir>（被代码收窄）/ 600 <dir>/tokens.json
+
+# 5) 反证 umask 无关：umask 077 下重跑第 4 步，权限必须仍是 700 / 600
+(umask 077
+ D3=$(mktemp -d); chmod 0755 "$D3"
+ node bin/dsh-remote-relay.js --port 0 --host 127.0.0.1 --data-dir "$D3" &
+ sleep 2; stat -c '%a %n' "$D3" "$D3/tokens.json"; kill %1)
+
+# 6) 可区分行为：读取路径**不**重收目录权限（t2 在 Windows 侧实测到的行为）
+#    目录已是 0755 且 tokens.json 已存在 → 二次启动只收文件、不碰目录
+D4=$(mktemp -d); chmod 0755 "$D4"
+node bin/dsh-remote-relay.js --port 0 --data-dir "$D4" & sleep 2; kill %1   # 首次：建目录为 0700
+chmod 0755 "$D4"                                                            # 人为放宽
+node bin/dsh-remote-relay.js --port 0 --data-dir "$D4" & sleep 2; kill %1   # 二次：读已有凭证
+stat -c '%a %n' "$D4"   # 期望仍是 755 —— 证明读取路径不调 restrictPermissions(dir)
+
+# 7) EPERM 面：把 tokens.json 放到只读挂载/只读目录上，确认进程不因此崩
+#    （实现把 chmodSync 包在 try/catch 里，预期：正常启动，仅权限未收窄）
+```
+
+#### 补验方法 B：在装有 pwsh 7 的 Windows 副机上执行
+
+```powershell
+cd <repo>
+# 0) 基线：PATH 上是否有 pwsh、解析结果与 family
+node --input-type=module -e "import('./lib/node/exec.js').then(m => console.log(JSON.stringify({ onPath: m.resolveOnPath('pwsh.exe'), resolved: m.resolvePowerShell(), desc: m.describePowerShell() }, null, 2)))"
+
+# 1) 确认 pwsh 7 真版本
+pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+
+# 2) 走真实 exec 链路：-File + BOM 的中文编码 + 退出码传递
+node --input-type=module -e "
+import { buildSpawn, PLATFORM } from './lib/node/exec.js'
+import { spawnSync } from 'node:child_process'
+const sp = buildSpawn(\"Write-Output '中文-ok'; exit 7\", { platform: PLATFORM.WINDOWS })
+const r = spawnSync(sp.file, sp.args, { encoding: 'utf8', windowsHide: true })
+console.log(JSON.stringify({ file: sp.file, status: r.status, stdout: r.stdout.trim(), stderr: r.stderr.trim() }, null, 2))
+sp.cleanup()
+"
+# 期望：file 指向 pwsh.exe、status === 7、stdout 恰为 '中文-ok'（无 U+FFFD、无乱码）
+
+# 3) PATH-only 分支：把安装目录临时移出 PATH 候选，只留 PATH 上的 pwsh（scoop/winget 链接）
+#    期望：resolved 变成 PATH 上那个 pwsh.exe，第 2 步仍跑通
+
+# 4) DSH_REMOTE_PWSH 覆盖面
+$env:DSH_REMOTE_PWSH = 'C:\Program Files\PowerShell\7\pwsh.exe'
+#    期望：describePowerShell().fromEnv === true，resolved 与之逐字相同
+
+# 5) 反向对照：指向不存在的路径，确认报错清晰而非被静默换掉
+$env:DSH_REMOTE_PWSH = 'C:\nope\pwsh.exe'
+#    期望：fromEnv=true、exists=false，exec 任务以明确的 ENOENT 失败
+
+# 6) 顺带验 7.1 第一条查出的边界：把 0 字节 pwsh.exe 放进绝对安装位置
+#    期望（当前实现）：resolved 采用它、describe 报 exists=true / family=pwsh-7，
+#    但 spawn 抛 EFTYPE —— 若已加守卫，则应继续向下回退
+```
 
 ### 7.2 设计取舍（非缺陷，但要知道代价）
+
+> 7.2 的**取舍判断**经 t2 复核仍成立；但其中两处**引用数字/论据**与仓库实况
+> 不符，已在条目内就地标注。
 
 - **`RELAY_QUEUE_BUDGET = 16 MiB` 的超限策略是「直接断连」**（`lib/relay.js`）。
   代价：一个正在传大产物的节点可能被整条断开，而不是被限流。取值依据是
@@ -209,6 +469,20 @@ combo 形式、`rev` 必需，且 URL 由首页 manifest 提供，不应手工�
 - **`node-registry.js` 1226 行**：连接层 + 注册表 + `RelayLink` + 心跳 + 等待器
   在一个文件里。属可维护性关注，非正确性风险（等待器的定时器清理经 t5 验证：
   4 场景断连后 `pending/nodes/tasks` 全 0 残留）。
+  （行数已复核：`HEAD` 版 `1226`（按 `readFileSync(...).split('\n').length` 计）；
+  t1 加上 `RelayLink` 护栏注释与并发闸门后工作区为 `1275`。原数字**正确**，无需改。
+  注意别用 PowerShell `Get-Content` / `Measure-Object -Line` 数行 —— 本机对同一文件
+  分别报 1198 / 1137，与 node 的字节级计数差 76–88 行，不可信。）
+
+  **但同一句里的「t5 验证」论据不可复现**：`test/` 下**没有任何**对
+  `pending.size` / `tasks.size` 的残留断言（全仓 grep 无命中），`git log` 里也没有
+  那次探针脚本。`resilience.test.js` 文件头虽标注「t5（D7 relay 超时 / E3-1）」，
+  但该文件只断言 `online` 翻转与 `timer` 清理，**不含**「4 场景断连后
+  `pending/nodes/tasks` 全 0 残留」这一条。它与 7.1 第三条引用的「4 场景 38 项断言」
+  同源，属同一批不可核实的数字。结论方向应无问题（`dispose()` 确实做
+  `pending.clear()` / `tasks.clear()` / `nodes.clear()`；`HEAD` 版该函数在
+  `node-registry.js:1178` 起，工作区版在 `1228` 起），
+  但引用时请改用可执行的用例名或补一条真实断言。
 
 ### 7.3 一条审计过程中的自我纠正（方法论）
 
