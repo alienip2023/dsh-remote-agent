@@ -216,6 +216,11 @@ check('15e', 'KNOWN-ISSUES 第 6 节记录测试方法论',
 check('15f', 'KNOWN-ISSUES 第 7 节记录审计结论',
   /##\s*7\.[^\n]*审计结论/.test(known) && /pwsh/.test(known) && /RELAY_QUEUE_BUDGET/.test(known),
   'KNOWN-ISSUES.md 第 7 节')
+// 6.3b：变异脚本被 kill 时「还原」步骤一并被跳过 —— 这是真实事故（整个仓库被改坏，
+// 且导致 captain 拿坏状态去质疑他人交付物）。它比 6.3 更硬，必须钉住。
+check('15g', 'KNOWN-ISSUES 6.3b 记录「kill 致还原被跳过」+ 结构性防御',
+  /###\s*6\.3b/.test(known) && /try\/finally/.test(known) && /ALLOW_MUTATE_WORKTREE/.test(known),
+  'KNOWN-ISSUES.md 第 6.3b 节')
 
 /* ── 16. client.js 契约 ── */check('16', 'PANEL_KEY 是单符号常量', /PANEL_KEY\s*=\s*'dsh-remote-agent'/.test(client), 'client.js')
 check('17', 'sidebar.panellist 用 id: PANEL_KEY', /id:\s*PANEL_KEY/.test(client), 'client.js')

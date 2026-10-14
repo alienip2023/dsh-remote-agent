@@ -165,6 +165,45 @@ combo 形式、`rev` 必需，且 URL 由首页 manifest 提供，不应手工�
 让文件看起来正常。还原后**必须做字节级校验**（比对哈希或 `git show` 字节），
 不能只靠"我写了还原代码"。
 
+### 6.3b 变异脚本被 kill 时，还原步骤会**一并被跳过**（比 6.3 更硬的一层）
+
+6.3 说的是"还原逻辑写错了"；实际发生过的是更糟的一种 —— **还原根本没执行到**。
+
+真实事故（2026-10-13）：captain 在做「独立验证 t1 的变异测试声明」时，脚本结构是
+
+```js
+for (const m of mutations) {
+  fs.writeFileSync(FILE, mutated)   // 注入
+  runTest()                          // 跑测试（可能很慢）
+  fs.writeFileSync(FILE, original)   // 还原
+}
+```
+
+其中一处注入删掉了 `RelayLink.start()` 里的 `this.stopped = false`，而那轮
+`runTest()` 因套件挂住而超时，captain 把进程 kill 掉 —— **`writeFileSync(original)`
+这一行从此没有机会执行**。注入形态被永久留在工作区。
+
+后果不是"测试结果不准"，而是**整个仓库被改坏**：`connectOnce()` 首行
+`if (this.stopped) return` 恒真 → hub 永不连上中继 → `relay-link.test.js` 19/29
+失败、`hub-worker-e2e` 由 8/8 退化为超时、`ui-routes` 由 21/21 退化为 1 例失败。
+更糟的是：captain 随后**拿这个被自己改坏的状态去质疑 t1 的交付物**。
+
+**结构性防御（二选一，不要靠纪律）**：
+
+1. 把「注入 → 跑 → 还原」放进 `try/finally` —— 能挡住异常，**挡不住 SIGKILL**；
+2. **只对副本操作，永不改工作区文件**：先复制到沙箱目录（`mkdtempSync`），
+   注入只作用于副本。**从机制上消除这个风险类别。**
+
+实践推荐第 2 种（relay-link-tester 在重做版里用的就是它）。若确有必须改工作区
+的场景，加一道显式闸门，例如：
+
+```js
+if (!process.env.ALLOW_MUTATE_WORKTREE) throw new Error('拒绝直接改工作区；请对副本操作')
+```
+
+**一句话**：6.3 是"怎么验证得对"，6.3b 是"验证工具本身不能损坏被测物" —— 后者
+优先级更高，因为前者的失败只是结论错，后者的失败会污染整个仓库。
+
 ### 6.4 工具本身会污染观测（Windows 专项）
 
 - **PowerShell 的 `Set-Content` 按系统 ANSI(GBK) 落盘**，会把 JS 里的 UTF-8
