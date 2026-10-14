@@ -43,8 +43,21 @@ const ENROLL_TOKEN = newRelayToken('en')
 
 /* ─────────────────────────── 工具 ─────────────────────────── */
 
-/** 起一个随机端口的中继。调用方负责 `closeRelay`。 */
-function startRelay(port = 0) {
+/**
+ * 起一个随机端口的中继。
+ *
+ * 传 `t` 时**自动注册兜底清理** —— 这是 t3 审计建议的修法（`hub-worker-e2e`
+ * 的 `startRelay(t)` 已经这么做，本文件原先漏了）。
+ *
+ * 为什么必须自动注册：本文件曾有 2 个用例在循环体/中途内联 `await closeRelay(srv)`。
+ * 一旦那之前的断言或 waitFor 抛错，内联的清理就永不执行 → 监听中的 relay http
+ * server 永久泄漏 → **Node 进程永不退出**。表现是「明确的断言失败」被降级成
+ * 「挂死到 SIGKILL、零 summary 输出」，使变异验证无法从输出区分挂住与失败
+ * （captain 就因此误判过归因）。
+ *
+ * 清理是幂等的：调用方再显式 `closeRelay` 一次也无害。
+ */
+function startRelay(t, port = 0) {
   const relay = createRelay({
     port,
     host: '127.0.0.1',
@@ -52,11 +65,15 @@ function startRelay(port = 0) {
     enrollToken: ENROLL_TOKEN,
   })
   return new Promise((resolve) => {
-    relay.listen(() => resolve({ relay, port: relay.address().port, base: `ws://127.0.0.1:${relay.address().port}/relay` }))
+    relay.listen(() => {
+      const srv = { relay, port: relay.address().port, base: `ws://127.0.0.1:${relay.address().port}/relay` }
+      if (t && typeof t.after === 'function') t.after(() => closeRelay(srv))
+      resolve(srv)
+    })
   })
 }
 
-/** 关中继：先硬销毁 socket（坑 2），再 await close()（坑 1）。 */
+/** 关中继：先硬销毁 socket（坑 2），再 await close()（坑 1）。幂等。 */
 async function closeRelay(srv) {
   for (const n of [...srv.relay.nodes.values()]) {
     try { n.conn.socket?.destroy?.() } catch { /* 已断 */ }
@@ -267,7 +284,7 @@ const expectedBase = (reconnectMs, attempt) =>
 /* ═══════════════════════ 一、连接与握手 ═══════════════════════ */
 
 test('RelayLink：start 后连上中继 —— ready=true、attempt=0、中继注册该 hub', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const { link, logs } = makeLink(srv.base)
@@ -313,7 +330,7 @@ test('RelayLink：未 ready 时 send / sendBinary / requestNodeList 返回 false
 })
 
 test('RelayLink：ready 时 requestNodeList 返回 true 且幂等', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const { link, frames } = makeLink(srv.base)
@@ -342,7 +359,7 @@ test('RelayLink：ready 时 requestNodeList 返回 true 且幂等', async (t) =>
  * 才挂 `conn.on('message')` 的，所以这一帧必然丢。
  */
 test('RelayLink：中继立即推送的 hello/hub 与 101 同段到达（head 里带帧）', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const url = `${srv.base}?role=hub&token=${encodeURIComponent(HUB_TOKEN)}`
@@ -370,7 +387,13 @@ test('RelayLink：真实链路里 hello/hub 收不到，但显式 node/list 每�
   let listSeen = 0
 
   for (let i = 0; i < ROUNDS; i += 1) {
-    const srv = await startRelay()
+    const srv = await startRelay(t)
+    // ⚠ 必须用 t.after 注册清理，**不能**在循环体里 `await closeRelay(srv)`。
+    // 原因（t3 审计查出，属真实缺陷）：循环内的 waitFor 一旦超时就会抛错，
+    // 而内联的 closeRelay 在抛错点之后 —— 永不执行 → 监听中的 relay http
+    // server 永久泄漏 → Node 进程永不退出。表现是「断言失败」被降级成
+    // 「挂死到 SIGKILL、零 summary 输出」，使变异验证无法区分挂住与失败。
+    t.after(() => closeRelay(srv))
     const { link, frames } = makeLink(srv.base)
     link.start()
     await waitFor(() => link.ready, { label: 'ready' })
@@ -382,7 +405,6 @@ test('RelayLink：真实链路里 hello/hub 收不到，但显式 node/list 每�
     if (frames.some((f) => f.t === RELAY_FRAME.HELLO_HUB)) helloSeen += 1
     if (frames.some((f) => f.t === RELAY_FRAME.NODE_LIST)) listSeen += 1
     link.stop()
-    await closeRelay(srv)
   }
 
   assert.equal(listSeen, ROUNDS, `显式请求的 node/list 必须每次都到（实际 ${listSeen}/${ROUNDS}）`)
@@ -392,7 +414,7 @@ test('RelayLink：真实链路里 hello/hub 收不到，但显式 node/list 每�
 })
 
 test('RelayLink：连上后自动 requestNodeList —— 目录里能看到已注册节点，且无 node/online 重播', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   // 先把 node 挂上，再让 link 连 —— 复现「hub 后到，中继不会为已连着的节点重播
@@ -521,7 +543,7 @@ test('RelayLink：重连成功后 attempt 重置为 0（避免退避被永久拉
 })
 
 test('RelayLink：当前连接掉线会重连（identity 守卫不能把正常掉线也吞掉）', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const { link } = makeLink(srv.base, { reconnectMs: 30 })
@@ -584,7 +606,7 @@ test('RelayLink：stop() 后不再重连', async (t) => {
 /* ═══════════════════════ 四、send / sendBinary ═══════════════════════ */
 
 test('RelayLink：ready 时 send 返回 true 且文本帧经中继路由到目标 node', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const { link } = makeLink(srv.base)
@@ -614,7 +636,7 @@ test('RelayLink：ready 时 send 返回 true 且文本帧经中继路由到目�
 })
 
 test('RelayLink：sendBinary 二进制净荷逐字节不变（含非法 UTF-8 字节）', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const { link } = makeLink(srv.base)
@@ -649,7 +671,7 @@ test('RelayLink：sendBinary 二进制净荷逐字节不变（含非法 UTF-8 �
 })
 
 test('RelayLink：上行二进制帧真的进了 link.onBinary', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const { link, binaries } = makeLink(srv.base)
@@ -671,7 +693,7 @@ test('RelayLink：上行二进制帧真的进了 link.onBinary', async (t) => {
 })
 
 test('RelayLink：真中继会先过滤畸形帧，hub 侧根本收不到（覆盖边界，非缺陷）', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const { link, logs, frames } = makeLink(srv.base)
@@ -781,7 +803,7 @@ test('RelayLink：面对不可信中继的畸形帧，只记日志、不打断�
 /* ═══════════════════════ 五、stop() 清理 ═══════════════════════ */
 
 test('RelayLink：stop 清 timer、关连接、conn=undefined，且幂等', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const { link } = makeLink(srv.base)
@@ -809,7 +831,7 @@ test('RelayLink：stop 清 timer、关连接、conn=undefined，且幂等', asyn
 })
 
 test('RelayLink：stop 后可以重新 start（重启语义）', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const { link } = makeLink(srv.base)
@@ -828,7 +850,7 @@ test('RelayLink：stop 后可以重新 start（重启语义）', async (t) => {
 })
 
 test('RelayLink：连接在途时 stop，不留半开连接也不留 timer', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const { link } = makeLink(srv.base, { reconnectMs: 20 })
@@ -887,7 +909,7 @@ test('RelayLink：URL 非法时 connectOnce 直接返回，不排无意义的重
  * undefined，任何重入都会再开一条 TCP 连接。
  */
 test('[缺陷回归] start() 幂等：不泄漏第二条连接，stop 能关干净', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const { link } = makeLink(srv.base)
@@ -928,7 +950,7 @@ test('[缺陷回归] start() 幂等：不泄漏第二条连接，stop 能关干�
  * 实测：注入 `if (false) return` 后，只有这条用例变红。
  */
 test('[缺陷回归] 并发 connectOnce 只产生一条连接（timer + start 竞态）', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const { link } = makeLink(srv.base)
@@ -965,7 +987,7 @@ test('[缺陷回归] 并发 connectOnce 只产生一条连接（timer + start �
  * 构造方式：直接把 `this.conn` 换成第二条连接，让第一条成为陈旧连接。
  */
 test('[缺陷回归] 陈旧连接的 close 不 clobber 当前连接', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const { link, logs } = makeLink(srv.base, { reconnectMs: 5000 })
@@ -1001,7 +1023,7 @@ test('[缺陷回归] 陈旧连接的 close 不 clobber 当前连接', async (t) 
 /* ═══════════ 八、与真中继的集成：目录 → 派单全链路 ═══════════ */
 
 test('RelayLink：node/list 目录与下行派单串起来（目录对齐的实际用途）', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
   const node = await openNode(srv.base, 'node-e2e')
@@ -1038,9 +1060,14 @@ test('RelayLink：node/list 目录与下行派单串起来（目录对齐的实�
 })
 
 test('RelayLink：中继整体消失后进入退避重连', async (t) => {
-  const srv = await startRelay()
+  const srv = await startRelay(t)
   const { link } = makeLink(srv.base, { reconnectMs: 40 })
   t.after(() => link.stop())
+  // ⚠ 兜底清理（t3 审计查出）：本用例的意图是「关掉中继看是否退避」，所以
+  // 下面会主动 closeRelay(srv)。但若它之前任一 waitFor 超时抛错，那次 closeRelay
+  // 就永不执行 → relay server 泄漏 → 进程挂死。这里注册一个幂等的兜底
+  // （closeRelay 对已关闭的 server 是安全的），保证任何路径都能收尾。
+  t.after(() => closeRelay(srv))
 
   link.start()
   await waitFor(() => link.ready, { label: 'ready' })
