@@ -46,8 +46,16 @@ jobs:
 
       # 本包**零外部 npm 依赖**（只用 node: 内置模块 + 一个 peer 的 schemastery）。
       # 所以不装依赖也能跑测试 —— 这正是它能直接从 git 安装的原因。
-      # 这里仍跑一次 install，为了验证 package.json 与 lockfile 自洽。
-      - name: Install (lockfile 自洽性)
+      # （实测过：node_modules 整个藏起来，`npm test` 524 条 + doc-drift 84 条全绿。
+      #  唯一 import schemastery 的是 lib/index.js —— DSH 插件入口，该依赖由宿主
+      #  运行时提供，没有任何测试碰到它。）
+      #
+      # 这一步的真实价值**不是**"验证 lockfile 自洽"（本仓库 .npmrc 显式
+      # package-lock=false，没有 npm lockfile 可校验；pnpm-lock.yaml 是 pnpm 的
+      # 锁文件，而零依赖包的锁文件漂移没有实际后果）。它实际在防的是：
+      # dependencies 里的 schemastery ^3.18.4 某天解析不了（版本下架/改名），
+      # 从 git 安装的用户会拿到一个装不上的包 —— 那是只有用户才看得到的失败。
+      - name: Install (依赖可解析性冒烟)
         run: npm install --no-audit --no-fund
 
       - name: Check (doc drift + tests)
