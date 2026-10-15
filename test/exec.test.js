@@ -660,6 +660,89 @@ test('resolveWorkspace：roots 的别名形态（符号链接 / 8.3 短名）必
   )
 })
 
+/**
+ * 8.3 短名形态回归（KNOWN-ISSUES §3 的模拟版）。
+ *
+ * 为什么是模拟而不是真实短名：本机 C: / D: 两个卷的 8.3 生成均关闭
+ * （构造 `DOT3PR~1` 后 `statSync` 得 ENOENT，实测确认），且
+ * `fsutil 8dot3name query` 需要管理员权限（拒绝访问）、
+ * `fsutil file setShortName` 同样需要提权 —— 开发机上**无法构造真实短名**。
+ * 但短名向量的代码路径与符号链接向量完全相同：`resolveWorkspace` 对
+ * roots 与 target 都调 `fs.realpathSync.native`（短名与 junction 都由它
+ * 展开），比对双方归一后的形态。
+ *
+ * 因此这里把 `fs.realpathSync.native` 换成映射表函数，模拟"启用 8.3 的卷上
+ * GetFinalPathNameByHandle 把短名展开成长名"的行为，精确复现 GH Actions
+ * Windows runner 的 TEMP 形态（`C:\Users\RUNNER~1\...`）：
+ *   ① roots 配短名、workspace 用长名 → 修复前假阳性拒绝（CI 假红根因）
+ *   ② roots 配长名、workspace 从短名进入 → 镜像方向同样必须放行
+ *   ③ 短名展开到允许根之外 → 必须拒绝（短名不是偷渡通道）
+ *   ④ 返回值必须是长名形态 —— 下游 mkdir / cwd 拿到短名，在禁用 8.3 的
+ *      卷上会直接 ENOENT
+ * 真实卷上的复核仍记在 KNOWN-ISSUES §3（残留风险已随本次模拟大幅下降）。
+ */
+test('resolveWorkspace：8.3 短名形态（模拟启用 8.3 的卷）与 target 同归 realpath 口径', (t) => {
+  const base = tmpdir(t, 'dsh-83-')
+  const longDir = path.join(base, 'verylongdirectoryname12345')
+  const shortDir = path.join(base, 'VERYLON~1') // 8.3 确定性算法：前 6 字符大写 + ~1
+  fs.mkdirSync(path.join(longDir, 'proj'), { recursive: true })
+
+  const realNative = fs.realpathSync.native
+  // 模拟卷：短名 → 长名；未映射的路径原样返回（真实 realpath 对其余输入的行为）。
+  const fakeNative = (p) => {
+    const s = String(p)
+    const lower = s.toLowerCase()
+    const shortLower = shortDir.toLowerCase()
+    if (lower === shortLower) return longDir
+    if (lower.startsWith(shortLower + path.sep)) return longDir + s.slice(shortDir.length)
+    return s
+  }
+  fs.realpathSync.native = fakeNative
+  t.after(() => {
+    fs.realpathSync.native = realNative
+  })
+
+  const ci = true // 模拟 Windows 的大小写不敏感
+
+  // ① roots 配短名、workspace 用长名 —— GH runner TEMP 假红的确切形态
+  assert.equal(
+    resolveWorkspace(path.join(longDir, 'proj'), { roots: [shortDir], caseInsensitive: ci }),
+    path.join(longDir, 'proj'),
+    'roots 是短名时必须展开后比对，不能假阳性拒绝',
+  )
+
+  // ② roots 配长名、workspace 从短名进入 —— 镜像方向，且返回值不带短名（④）
+  assert.equal(
+    resolveWorkspace(path.join(shortDir, 'proj'), { roots: [longDir], caseInsensitive: ci }),
+    path.join(longDir, 'proj'),
+    'workspace 是短名时必须展开成同一长名，返回值不能漏短名形态给下游',
+  )
+
+  // ③ 短名展开到允许根之外 → 拒绝。短名只是目录项，卷上完全可能指向
+  //    与字面预期不同的位置（长名重建后旧项复用），判定必须以 realpath 为准。
+  const outside = path.join(base, 'elsewhere')
+  fs.mkdirSync(outside, { recursive: true })
+  const escaping = path.join(base, 'ESCAPE~1')
+  const fakeEscape = (p) => {
+    const s = String(p)
+    const lower = s.toLowerCase()
+    const escLower = escaping.toLowerCase()
+    if (lower === escLower) return outside
+    if (lower.startsWith(escLower + path.sep)) return outside + s.slice(escaping.length)
+    return fakeNative(p)
+  }
+  fs.realpathSync.native = fakeEscape
+  try {
+    assert.throws(
+      () => resolveWorkspace(path.join(escaping, 'proj'), { roots: [longDir], caseInsensitive: ci }),
+      (e) => e.code === ERROR_CODE.WORKSPACE_DENIED,
+      '短名解析到根外时必须按 realpath 结果拒绝，字面前缀不算数',
+    )
+  } finally {
+    fs.realpathSync.native = fakeNative
+  }
+})
+
 test('resolveWorkspace：允许"尚不存在但父目录合法"的工作区（任务可能要创建它）', (t) => {
   const root = tmpdir(t, 'dsh-ws2-')
   const ci = process.platform === 'win32'

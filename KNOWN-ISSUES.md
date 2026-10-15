@@ -75,14 +75,23 @@ relay 侧未动：`lib/relay.js` 的 close 处理器有 `rec.conn === conn` 守�
 
 ---
 
-## 3. B2 的 Windows 8.3 短名向量未验证
+## 3. B2 的 Windows 8.3 短名向量：模拟回归已落地，真实卷复核仍缺
 
-本卷 `NtfsDisable8dot3NameCreation` 已开启，`dir /x` 输出 0 行含 `~`，
-**无法构造真实短名**。代码层推理是 `exec.js` 的 `realpathSync` 会展开成长名，
-但这条**不作为通过依据**。
+**2026-10-15 更新**：短名向量的代码路径已有**确定性模拟回归**锁定
+（`test/exec.test.js`「8.3 短名形态（模拟启用 8.3 的卷）与 target 同归
+realpath 口径」，变异负向控制验证过：把 roots 的 realpath 去掉后该测试与
+junction 测试一同变红）。覆盖四个断言：roots 短名 × workspace 长名（GH
+runner TEMP 假红的确切形态）、镜像方向、短名展开到根外必须拒绝、返回值
+必须是长名形态。
 
-**补验方法**：在一台启用 8.3 的卷上，用 `fsutil 8dot3name set 0` 打开，
-对工作区建短名后重跑 `resolveWorkspace` 的越界用例。
+仍缺的只有**真实短名**：本机 C: / D: 两个卷均**不生成** 8.3 短名
+（实测构造 `DOT3PR~1` 后 `statSync` 得 ENOENT），且 `fsutil 8dot3name query`
+与 `fsutil file setShortName` 均需管理员权限（拒绝访问）——开发机上无法构造。
+真实短名与 junction 走同一条 `fs.realpathSync.native` 展开路径，模拟回归
+已覆盖该路径的全部比对逻辑；真实卷复核降级为**低风险残留**。
+
+**补验方法**（有管理员权限时）：`fsutil 8dot3name set 0` 打开生成 → 对
+工作区建短名 → 重跑 `resolveWorkspace` 的越界用例与上述测试的 ①②③④。
 
 ---
 
