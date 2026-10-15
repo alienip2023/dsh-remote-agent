@@ -171,3 +171,38 @@ test('README / check-doc-drift 已同步第 8 个工具', () => {
   const hasPurge = /remote_purge|purgeTasks|\/purge/.test(drift)
   assert.ok(hasPurge, 'check-doc-drift 应锁住 purge 的存在（防文档漂移）')
 })
+
+/* ─────────────── 5. 自动清理分支的行为回归（eslint no-undef 抓到的真 bug） ─────────────── */
+
+test('applySync 自动清理：终态超期视图被清，且分支内无未定义引用', async (t) => {
+  // 回归背景：清理分支用了 lib/hub/index.js 的私有 numOr，本文件没定义 ——
+  // 分支一走到就 ReferenceError（此前测试只做文本断言，从没真正执行过它）。
+  // retainMs=1ms 让任何终态任务立刻超期；ackTimeoutMs=0 让在途宽限不挡清理。
+  const { NodeRegistry } = await import('../lib/hub/node-registry.js')
+  const registry = new NodeRegistry({
+    log: () => {},
+    limits: { taskViewRetainMs: 1, ackTimeoutMs: 0, helloTimeoutMs: 10_000 },
+  })
+  const conn = { send: () => {}, close: () => {} }
+  const rec = registry.ingestHello({
+    helloData: { nodeId: 'node-prune', protocol: 1, os: 'windows', nonce: '', time: Date.now() },
+    conn,
+    transport: 'direct',
+    pending: undefined,
+  })
+  assert.ok(rec, 'hello 应登记成功')
+
+  const old = Date.now() - 60_000
+  registry.applySync('node-prune', {
+    tasks: [{ taskId: 'task-old', status: 'completed', endedAt: old, mode: 'exec' }],
+  })
+  // 分支执行本身不抛（修复前这里 ReferenceError: numOr is not defined）
+  assert.ok(!registry.tasks.has('task-old'), '超期终态任务视图应被清掉')
+  assert.ok(!rec.tasks.has('task-old'), '节点视图里的同一条也应被清掉')
+
+  // 对照组：刚结束的任务不被清（保留期语义，remote_status 还要能查到）
+  registry.applySync('node-prune', {
+    tasks: [{ taskId: 'task-fresh', status: 'completed', endedAt: Date.now(), mode: 'exec' }],
+  })
+  assert.ok(registry.tasks.has('task-fresh'), '刚结束的任务应保留到保留期之后')
+})
