@@ -427,18 +427,31 @@ test('UI pull：路径穿越被拒（../ 与反斜杠两种写法）', async (t)
   const goal = writeFileCmd(path.join(env.wsRoot, 'ui-out.txt'), 'ui-ok')
   const { taskId } = await runExec(t, env, { goal })
 
+  // '\' 是否为分隔符是平台语义：Windows 上 `..\..\Windows` 是真实穿越，
+  // 必须拒；POSIX 上它是**合法字面文件名**，落在 pullRoot 内（不构成逃逸），
+  // 如实断言"接受且落点在 pullRoot 里"，而不是把 Windows 语义硬套全平台。
   const escapes = [
     '../../../../etc',
-    '..\\..\\Windows',
     '../../../',
     '..',
     'sub/../../..',
     path.join(root, '..', '..', 'escaped'),
   ]
+  if (process.platform === 'win32') escapes.splice(1, 0, '..\\..\\Windows')
+
   for (const dest of escapes) {
     const r = await env.post(`${UI}/pull`, { taskId, paths: ['ui-out.txt'], dest })
     assert.equal(r.status, 403, `dest=${JSON.stringify(dest)} 应被拒，实际 ${r.status} ${r.text}`)
     assert.match(r.json.error, /^dest-outside-pull-root/, `dest=${JSON.stringify(dest)} code=${r.json.error}`)
+  }
+
+  if (process.platform !== 'win32') {
+    const r = await env.post(`${UI}/pull`, { taskId, paths: ['ui-out.txt'], dest: '..\\..\\Windows' })
+    assert.equal(r.status, 200, `POSIX 上反斜杠是字面文件名，应接受：${r.text}`)
+    assert.ok(
+      fs.existsSync(path.join(pullRoot, '..\\..\\Windows', 'ui-out.txt')),
+      '落盘必须还在 pullRoot 内（字面名，不构成逃逸）',
+    )
   }
 
   // 越界目录里不应有落盘文件

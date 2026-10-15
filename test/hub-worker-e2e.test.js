@@ -42,6 +42,7 @@ import { PROTOCOL_VERSION, TASK_STATUS, newTaskId } from '../lib/protocol.js'
 import { createRelay, newRelayToken } from '../lib/relay.js'
 
 const IS_WIN = process.platform === 'win32'
+const IS_MAC = process.platform === 'darwin'
 
 /** 建一个独立临时根目录（工作区 + 主副机状态目录都放这里）。 */
 function tmpRoot(t) {
@@ -355,7 +356,8 @@ test('hub⇄worker e2e（relay）：remote_task → accept → 完成 → handof
   assert.equal(nodes.nodes[0].nodeId, env.nodeId)
   assert.equal(nodes.nodes[0].online, true)
   assert.equal(nodes.nodes[0].agentMode, true)
-  assert.equal(nodes.nodes[0].os, IS_WIN ? 'windows' : 'linux')
+  // hello.os 来自副机的 detectOs()：windows/darwin/linux 三选一
+  assert.equal(nodes.nodes[0].os, IS_WIN ? 'windows' : IS_MAC ? 'darwin' : 'linux')
   assert.ok(nodes.nodes[0].roots.includes(env.wsRoot))
 
   // healthz 也确认节点注册（比间接推断更硬）

@@ -664,12 +664,19 @@ test('resolveWorkspace：允许"尚不存在但父目录合法"的工作区（�
   const root = tmpdir(t, 'dsh-ws2-')
   const ci = process.platform === 'win32'
 
-  // 父目录存在、目标本身不存在 → 放行（任务自己要建它）
+  // 父目录存在、目标本身不存在 → 放行（任务自己要建它）。
+  // 返回值与 target 比较必须走 realpath 口径：GH runner 的 TEMP 是 8.3 短名
+  // （RUNNER~1），macOS 的 /var 是 /private/var 的别名 —— resolveWorkspace
+  // 返回的是 realpath 形态，与字面 target 相比必然不等（假红）。
   const parent = path.join(root, 'brand')
   fs.mkdirSync(parent)
   const target = path.join(parent, 'new')
   assert.equal(fs.existsSync(target), false)
-  assert.equal(resolveWorkspace(target, { roots: [root], caseInsensitive: ci }), target)
+  const parentReal = fs.realpathSync.native ? fs.realpathSync.native(parent) : fs.realpathSync(parent)
+  assert.ok(
+    samePath(resolveWorkspace(target, { roots: [root], caseInsensitive: ci }), path.join(parentReal, 'new')),
+    '返回值必须是"realpath(parent) + 目标名"',
+  )
 
   // 父目录本身也不可达 → 拒绝（"not reachable" 是刻意的深度限制：
   // 只允许最后一段不存在，不允许整条链凭空捏造）

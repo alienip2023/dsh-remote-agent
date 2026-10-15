@@ -39,20 +39,38 @@ test('newNodeToken：nt_ 前缀 + 每次不同 + 无易混淆歧义字符问题�
 
 test('normalizeRoots：~ 展开、相对路径落 home、尾斜杠剥离、去重（大小写不敏感）', () => {
   const home = os.homedir()
-  const { clean, missing } = normalizeRoots([
-    'D:\\work\\',
-    'd:/work', // 同目录不同写法 → 去重
-    '~/dsh-remote-work',
-    'relative-dir',
-    '',
-    42,
-  ])
-  assert.equal(clean[0], 'D:\\work')
-  assert.equal(clean[1], path.join(home, 'dsh-remote-work'))
-  assert.equal(clean[2], path.join(home, 'relative-dir'))
-  // 去重：4 个输入进 3 个（'' 与 42 被丢）
-  assert.equal(clean.length, 3)
-  assert.ok(Array.isArray(missing))
+  if (process.platform === 'win32') {
+    const { clean, missing } = normalizeRoots([
+      'D:\\work\\',
+      'd:/work', // 同目录不同写法 → 去重
+      '~/dsh-remote-work',
+      'relative-dir',
+      '',
+      42,
+    ])
+    assert.equal(clean[0], 'D:\\work')
+    assert.equal(clean[1], path.join(home, 'dsh-remote-work'))
+    assert.equal(clean[2], path.join(home, 'relative-dir'))
+    // 去重：6 个输入进 3 个（'' 与 42 被丢）
+    assert.equal(clean.length, 3)
+    assert.ok(Array.isArray(missing))
+  } else {
+    // POSIX：反斜杠不是分隔符，'D:\work' 是普通（非法形态的）目录名 ——
+    // 盘符路径的收敛规则只在 Windows 上成立，不能跨平台断言。
+    const { clean, missing } = normalizeRoots([
+      '~/dsh-remote-work',
+      'relative-dir',
+      'x//', // 尾分隔符剥离
+      'x', // 与上一条同目录 → 去重
+      '',
+      42,
+    ])
+    assert.equal(clean[0], path.join(home, 'dsh-remote-work'))
+    assert.equal(clean[1], path.join(home, 'relative-dir'))
+    assert.equal(clean[2], path.join(home, 'x'))
+    assert.equal(clean.length, 3)
+    assert.ok(Array.isArray(missing))
+  }
 })
 
 /* ══════════════════ hubUrl ══════════════════ */

@@ -279,7 +279,13 @@ test('loadOrCreateTokens：dataDir 是相对路径时按 cwd 解析成绝对路�
 
   const rec = loadOrCreateTokens('relative-dir')
   assert.ok(path.isAbsolute(rec.path), `落盘路径必须是绝对路径：${rec.path}`)
-  assert.equal(path.dirname(rec.path), path.join(sandbox, 'relative-dir'), '相对路径必须按 cwd 解析')
+  // 期望值也要走 realpath 口径：macOS 的 /var → /private/var 是符号链接别名，
+  // process.chdir 后 process.cwd() 返回的是别名展开后的形态，与字面 sandbox 相比必假红。
+  assert.equal(
+    path.dirname(rec.path),
+    path.join(fs.realpathSync(sandbox), 'relative-dir'),
+    '相对路径必须按 cwd 解析',
+  )
   assert.equal(fs.existsSync(rec.path), true)
 
   // 同一相对路径再读一次必须幂等（证明解析稳定，不会每次落到不同位置）

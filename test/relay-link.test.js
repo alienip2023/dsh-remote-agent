@@ -359,6 +359,14 @@ test('RelayLink：ready 时 requestNodeList 返回 true 且幂等', async (t) =>
  * 才挂 `conn.on('message')` 的，所以这一帧必然丢。
  */
 test('RelayLink：中继立即推送的 hello/hub 与 101 同段到达（head 里带帧）', async (t) => {
+  // "101 与第一帧合并进同一个 TCP 段"是**写时机**决定的，不是协议保证 ——
+  // TCP 随时可以拆段。实测 Windows/Linux 上 8/8 稳定合并；macOS 调度不同，
+  // 实测 6~8/8 浮动（CI runner 上尤其）。断言"必然合并"在 darwin 上是伪命题，
+  // 显式 skip —— 该行为契约的验证由 Windows/Linux runner 承担。
+  if (process.platform === 'darwin') {
+    t.skip('macOS 的 TCP 分段时机不保证 101 与帧同段到达（平台特性，非回归）')
+    return
+  }
   const srv = await startRelay(t)
   t.after(() => closeRelay(srv))
 
@@ -382,6 +390,15 @@ test('RelayLink：中继立即推送的 hello/hub 与 101 同段到达（head �
 })
 
 test('RelayLink：真实链路里 hello/hub 收不到，但显式 node/list 每次都到', async (t) => {
+  // 与上一条同一平台前提：hello/hub "必然丢"依赖"必然同段"。darwin 上它
+  // 有时会到达（实测 1/8），断言 100% 丢失在 macOS 是伪命题，显式 skip。
+  // skip 掉的只是"丢失比例"；node/list 的送达契约由上面
+  // 「连上后自动 requestNodeList」「ready 时 requestNodeList → 中继回目录」
+  // 两条用例继续覆盖，不受影响。
+  if (process.platform === 'darwin') {
+    t.skip('macOS 的 TCP 分段时机不保证 hello/hub 100% 丢失（平台特性，非回归）')
+    return
+  }
   const ROUNDS = 8
   let helloSeen = 0
   let listSeen = 0
