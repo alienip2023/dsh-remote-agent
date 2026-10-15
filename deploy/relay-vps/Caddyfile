@@ -1,0 +1,24 @@
+# dsh-remote-relay 的 TLS 前置模板（Caddy v2）
+#
+# 安装：sudo cp Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+# 前提：域名 DNS 已指向本机，80/443 未被占用（Caddy 用 ACME 自动签证书）。
+#
+# Caddy 自动处理 WebSocket 升级（Upgrade: websocket 检测是内置的），
+# 所以 /relay 的 ws 升级与 /healthz、/api/relay/* 的普通 HTTP 用同一段
+# reverse_proxy 即可，不需要为 WS 单写规则。
+
+relay.example.com {
+	# 中继不返回 HTML，压缩只省流量；不需要可整行删掉
+	encode zstd gzip
+
+	reverse_proxy 127.0.0.1:8890
+}
+
+# ── 配套要求 ──────────────────────────────────────────────────────────
+# 1. 中继本体只听回环：/etc/dsh-remote-relay/env 里 DSH_RELAY_HOST=127.0.0.1
+#    （relay.env.example 模板默认即此值；公网不再直接暴露 8890）
+# 2. 云安全组只放 80/443，不放 8890
+# 3. 两端配置换成 wss：
+#      hub:   relay.url = wss://relay.example.com/relay
+#      node:  relayUrl = wss://relay.example.com/relay
+#    token 不变。端口 443 省略不写。

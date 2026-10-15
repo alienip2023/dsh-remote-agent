@@ -138,13 +138,19 @@ test('收口：reg() 必须给每个工具包上净化层', () => {
   assert.match(regBody, /toPlainJson\(/, 'reg 必须把 execute 的返回值过一遍 toPlainJson')
 })
 
-test('收口：toPlainJson 必须覆盖全部 7 个工具（经 reg 注册）', () => {
+test('收口：toPlainJson 必须覆盖全部 8 个工具（经 reg 注册）', () => {
   const src = fs.readFileSync(TOOLS, 'utf8')
   const names = [...src.matchAll(/name: '(remote_[a-z_]+)'/g)].map((m) => m[1])
-  assert.equal(names.length, 7, `应有 7 个工具，实际 ${names.length}: ${names.join(', ')}`)
+  assert.equal(names.length, 8, `应有 8 个工具，实际 ${names.length}: ${names.join(', ')}`)
   // 每个都走 reg({...})，所以自动被包净化
   const regCalls = (src.match(/\n  reg\(\{/g) || []).length
-  assert.equal(regCalls, 7, `应有 7 处 reg({...}) 调用，实际 ${regCalls}`)
+  assert.equal(regCalls, 8, `应有 8 处 reg({...}) 调用，实际 ${regCalls}`)
+  // 锁住工具集合本身：新增/删除工具时这条会提醒你同步文档与断言
+  assert.deepEqual(
+    names.slice().sort(),
+    ['remote_cancel', 'remote_handoff', 'remote_manifest', 'remote_nodes', 'remote_pull', 'remote_purge', 'remote_status', 'remote_task'],
+    '工具集合变了 —— 记得同步 README、check-doc-drift 与这里的断言',
+  )
 })
 
 /** 从源码取出 dropNullForSchema 并求值。 */

@@ -1,0 +1,47 @@
+# dsh-remote-relay systemd unit 模板
+#
+# 用法：把 <尖括号> 占位符换成实际值，安装到
+#   /etc/systemd/system/dsh-remote-relay.service
+# 或者直接用 scripts/relay-init.sh 一键生成等价比的一份（推荐）。
+#
+# 与一键脚本的差异只有一点：本文件把路径写成占位符，方便先审后装；
+# relay-init.sh 生成的是填好值的同一份。
+
+[Unit]
+Description=dsh-remote-agent relay (addressing + forwarding only)
+Documentation=https://github.com/zbzbhs/dsh-remote-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 运行身份：专用系统用户，nologin
+User=dsh-relay
+Group=dsh-relay
+# 包根（bin/dsh-remote-relay.js 的上级目录）
+WorkingDirectory=<PKG_DIR>
+# 凭证与监听参数都来自 env 文件（0600，root:root）；文件不存在会启动失败，
+# 这是故意的——没有凭证的中继没有意义。
+EnvironmentFile=/etc/dsh-remote-relay/env
+ExecStart=<NODE_BIN> <PKG_DIR>/bin/dsh-remote-relay.js \
+  --port ${DSH_RELAY_PORT} --host ${DSH_RELAY_HOST} --data-dir ${DSH_RELAY_DATA_DIR}
+
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# ── 加固（与 relay-init.sh 生成的一致，勿随意删） ──
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# 唯一可写路径：数据目录（tokens.json 在这里）
+ReadWritePaths=/var/lib/dsh-remote-relay
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dsh-remote-relay
+
+[Install]
+WantedBy=multi-user.target

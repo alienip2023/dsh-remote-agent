@@ -351,6 +351,52 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
     'test/tool-output-plain.test.js')
 }
 
+/* ── 41~44. 任务视图累积的自锁（2026-10-15 实测踩到）──
+ *
+ * 连续派几十条任务后节点彻底不可用（`already holds 64 tasks`），
+ * 连"派一条清理命令"都做不到 —— 自锁，只能人工去副机删文件。
+ *
+ * 两个根因都在代码里，必须钉住：
+ *   1. 上限按历史累计算（`rec.tasks.size` 含终态）
+ *   2. 视图只增不减（没有主动清理，也没有手动入口）
+ */
+{
+  const registry = read('lib/hub/node-registry.js')
+  const hubTools = read('lib/hub/tools.js')
+  const uiRoutes = read('lib/hub/ui-routes.js')
+  const clientSrc = read('lib/client.js')
+  const hubIdx = read('lib/hub/index.js')
+
+  // ⚠ 断言必须锚定"按非终态过滤"这个语义 —— 而不是"文件里没有 rec.tasks.size"。
+  // 后者太弱：只要注释里提一句就失效。这里查真正的判断表达式。
+  check('41', 'createTask 的上限按非终态任务数算（不按历史累计）',
+    /TERMINAL_STATUS\.has\(/.test(registry)
+    && /activeCount/.test(registry)
+    && /active tasks/.test(registry),
+    'lib/hub/node-registry.js 的 createTask（曾经按 rec.tasks.size 算，导致自锁）')
+
+  check('42', 'applySync 会主动清理超过保留期的终态视图',
+    /taskViewRetainMs/.test(registry) && /taskViewRetainMs/.test(hubIdx),
+    'lib/hub/node-registry.js 的 applySync + lib/hub/index.js 的 limits 默认值')
+
+  check('43', '提供了立即清理的入口（工具 + UI 路由 + 面板按钮）',
+    /name:\s*'remote_purge'/.test(hubTools)
+    && /UI_API_PREFIX\}\/purge/.test(uiRoutes)
+    && /apiPost\('\/purge'/.test(clientSrc),
+    'remote_purge 工具 / /purge 路由 / 面板「清理」按钮 —— 三者缺一，死局就没有出口')
+
+  check('44', 'purgeTasks 只清 hub 视图，不给副机发帧',
+    (() => {
+      const i = registry.indexOf('purgeTasks(')
+      if (i < 0) return false
+      const seg = registry.slice(i, i + 2500)
+      // 剥注释：注释里解释了"不碰副机"，不剥会误判
+      const code = seg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+      return !/this\.send\(/.test(code)
+    })(),
+    'lib/hub/node-registry.js 的 purgeTasks（副机是任务状态的权威，不能替它删）')
+}
+
 /* ── 36~40. 小白向导（lib/setup.js + bin/dsh-remote-setup.js） ──
  *
  * 向导的存在意义是"小白不看细节也能配好"，所以它的关键承诺必须钉住：

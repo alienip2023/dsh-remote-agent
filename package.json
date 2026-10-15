@@ -44,6 +44,7 @@
   "files": [
     "lib",
     "bin",
+    "deploy",
     "profiles",
     "scripts",
     "cordis.patch.yml",
