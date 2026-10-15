@@ -454,6 +454,18 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
     'bin/双击运行-配置向导.cmd + README.md')
 }
 
+/* ── 49. 真实运行时自检工具与 KNOWN-ISSUES 验证记录 ──
+ *
+ * 打活 hub 的自检脚本（独立 OS 进程 worker → 真实 DSH 桌面 hub）是
+ * "发布前跑一遍"的入口，必须存在；KNOWN-ISSUES 第 8 节记录实测边界
+ * （哪些验了/哪些要人肉/哪些要两台真机），删了会让"待实机确认"的
+ * 状态重新变成没人说得清的黑箱。
+ */
+check('49', '真实运行时自检脚本存在，KNOWN-ISSUES 第 8 节记录验证边界',
+  fs.existsSync(path.join(ROOT, 'scripts', 'e2e-live-check.mjs'))
+  && /e2e-live-check/.test(known) && /##\s*8\./.test(known),
+  'scripts/e2e-live-check.mjs + KNOWN-ISSUES.md 第 8 节')
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

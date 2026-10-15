@@ -538,3 +538,44 @@ $env:DSH_REMOTE_PWSH = 'C:\nope\pwsh.exe'
 英文术语）。**这印证了第 6 节的教训：静态统计会误导，要读实际内容。**
 
 
+
+## 8. 真实运行时验证（2026-10-15，打正在运行的 DSH 桌面版）
+
+**为什么有这一节**：README 状态行长期挂着「agent 后端两个根因已修、待实机
+端到端确认」。此前所有 e2e 都是**进程内**装配（真协议真传输，但同一个 node
+进程），没有碰过真实 DSH 运行时。本节记录第一次真机验证的结论与边界。
+
+### 已验证（自动，可重复）
+
+用 `scripts/e2e-live-check.mjs` 把 worker 跑在**独立 OS 进程**里，拨入
+**正在运行的 DSH 桌面版 hub**（本机实测，DSH 0.2.0-rc.2）：
+
+1. **真实 upgrade 握手 + 协议 hello + registry 注册**：worker 拨入即
+   `online`（空 token 的 hub 按"仅限可信内网"语义放行 —— 与文档一致）。
+2. **registry 上下线实时性**：worker 在线时 `healthz` 报 `online:2`，
+   进程退出后数秒内回落到 `online:1` —— 真实 webServer 路由下的
+   在线状态检测是活的。
+3. **UI 围栏确认（安全结论，非缺陷）**：hub 的 webserver 除 `/healthz`
+   外**整台 401**（`/`、`/index.html`、`/ui/config`、`/ui/overview` 全中）
+   —— 没有桌面会话的请求一律被 `requestRejection` 拦掉。这意味着：
+   - UI 路由不裸奔，设计如此、行为正确；
+   - 但**自动化脚本无法代替桌面会话派发任务** —— 发布自检因此设计成
+     「挂载 + 人肉派发 + 自动监视」（见下）。
+
+### 待用户 30 秒验证（工具已就绪）
+
+```bash
+node scripts/e2e-live-check.mjs --hub-url ws://<hub>:19387/api/remote-agent/node
+```
+
+然后到 DSH 桌面对该节点派一个 exec 任务。工具监视副机 TaskStore 落盘记录
+（状态机）与 roots 产物（sha256），自动判定。**这一步需要人的原因**：
+hub webserver 被 DSH 会话围栏保护（见上第 3 条），不是脚本缺陷。
+
+### 仍未覆盖（需要两台真机）
+
+- **agent 模式全链路**：副机需要真实 DSH 提供的 agent 服务（ctx 里的
+  agentLoop）。本机 spawn 的 worker 拿不到该服务（selectRunner 走 headless），
+  agent 链路必须在两台都装了 DSH 的机器上验证。两处根因修复
+  （source 类型 20919b5、模型选择 367daef）目前只有进程内测试覆盖。
+- **relay 模式真机**：进程内 e2e 已覆盖 happy path，跨 NAT 真机未验。

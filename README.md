@@ -23,7 +23,7 @@
 
 | | |
 |---|---|
-| **状态** | 0.1.0 —— 主机侧端到端可用；副机 `exec` 可用，`agent` 后端两个根因已修（source 类型 + 模型选择），**待实机端到端确认**（见 [KNOWN-ISSUES](KNOWN-ISSUES.md)）|
+| **状态** | 0.1.0 —— 主机侧端到端可用；副机 `exec` 可用，真实运行时拨入已实测（独立进程 worker → 正在运行的 DSH 桌面 hub，见 [KNOWN-ISSUES §8](KNOWN-ISSUES.md)）；`agent` 链路两个根因已修，待两台真机确认 |
 | **DSH** | 桌面版 / CLI，0.2.0-rc.2 验证 |
 | **平台** | Windows（全量验证）· Linux / macOS（CI 覆盖）|
 | **依赖** | **零外部 npm 依赖** —— 只用 `node:` 内置模块 |
