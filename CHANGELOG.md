@@ -11,6 +11,25 @@
 
 ## [Unreleased]
 
+### 新增：Web 面板 GUI 化 —— 副机接入按钮 + 派单模型输入
+
+零终端小白的图形入口（面板是 hub 侧唯一 GUI）：
+
+- **「副机接入」卡片**（`lib/client.js`）：一键生成配对码并复制 `pair:`
+  配置行 + 复制防火墙放行命令 —— 主机侧全程鼠标，免终端免向导。
+  端口不用配置：面板本身就由 hub 的 webserver 服务，浏览器地址栏端口
+  即节点拨入端口。
+- **token 披露边界**（`GET /api/remote-agent/ui/pair-info`）：含 token 的
+  完整配对码**只对本机回环请求**生成 —— 面板可能被 lanBind 暴露到局域网，
+  局域网内能打开面板 ≠ 应该拿到主机凭证。非回环得到不含 token 的码 +
+  一条人话提示。与 /config 的"凭证只回 set 布尔"同一精神。
+- **dispatch 表单加「模型」输入**（可选）：留空用副机默认；填
+  `deepseek-reasoner` 或 `provider/model` 均可，原始字符串交服务端
+  normalizeModelSelection 归一 —— 与 remote_task 工具同一通道。
+- 测试：ui-routes 3 条（形状/回环全码/非回环拒绝，非回环用伪造
+  remoteAddress 直打 handler）；doc-drift 断言 45~47 钉住
+  "loopback 策略不被放宽 / 面板入口真实存在 / model 真进请求体"。
+
 ### 新增：配对码（pair）—— 副机配置从三行抄写变成一行粘贴
 
 副机部署最容易抄错的就是 `hubUrl` / `token` 两行（少半个斜杠、token 带尾部

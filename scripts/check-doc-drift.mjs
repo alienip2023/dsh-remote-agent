@@ -412,6 +412,27 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
     'lib/pairing.js decodePairCode')
 }
 
+/* ── 45~47. 面板 GUI 化（pair-info + dispatch 模型输入） ──
+ *
+ * 零终端小白的图形入口承诺必须钉住：
+ *   - /pair-info 路由存在且 token 披露边界（loopback-only 全码）不被"好心"放宽
+ *   - 面板真的有"副机接入"入口与 pair 复制按钮（API 存在而面板没接 = 假功能）
+ *   - dispatch 表单的模型输入真的进请求体
+ */
+{
+  const client = read('lib/client.js')
+  const rootReadme = read('README.md')
+  check('45', '/pair-info 路由存在，token 披露仅限回环（策略不被放宽）',
+    /pair-info/.test(uiRoutes) && /loopback/.test(uiRoutes) && /remoteAddress/.test(uiRoutes),
+    'lib/hub/ui-routes.js pair-info（loopback 判定 + remoteAddress 读取）')
+  check('46', '面板有副机接入入口与 pair 复制按钮（GUI 落点真实存在）',
+    /副机接入/.test(client) && /复制 pair 配置行/.test(client) && /loadPair/.test(client),
+    'lib/client.js 副机接入卡片')
+  check('47', 'dispatch 表单的模型输入进请求体，README 说明面板两条入口',
+    /model:\s*fv\.model/.test(client) && /副机接入/.test(rootReadme) && /模型/.test(rootReadme),
+    'lib/client.js dispatch + README.md')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

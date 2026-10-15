@@ -35,6 +35,7 @@ import { applyHub } from '../lib/hub/index.js'
 import { applyWorker } from '../lib/node/index.js'
 import { registerUiRoutes } from '../lib/hub/ui-routes.js'
 import { createRelay, newRelayToken } from '../lib/relay.js'
+import { decodePairCode } from '../lib/pairing.js'
 
 const IS_WIN = process.platform === 'win32'
 
@@ -252,7 +253,7 @@ function startRelay(t) {
  * @param {object} t
  * @param {object} o { root, relay, uiPullRoot, connection }
  */
-async function setup(t, { root, relay, uiPullRoot, connection, nodeId = 'ui-worker' }) {
+async function setup(t, { root, relay, uiPullRoot, connection, nodeId = 'ui-worker', nodeToken } = {}) {
   const wsRoot = path.join(root, 'ws')
   fs.mkdirSync(wsRoot, { recursive: true })
 
@@ -272,6 +273,7 @@ async function setup(t, { root, relay, uiPullRoot, connection, nodeId = 'ui-work
 
   const hubConfig = { role: 'hub', systemPrompt: false, relay: { url: relay.url, token: relay.hubToken } }
   if (uiPullRoot !== undefined) hubConfig.uiPullRoot = uiPullRoot
+  if (nodeToken !== undefined) hubConfig.nodeToken = nodeToken
   const hub = applyHub(hubCtx.ctx, hubConfig)
 
   const workerCtx = {
@@ -588,6 +590,102 @@ test('UI 响应：不含凭证字样，也不含内部连接对象', async (t) =
   assert.ok(td.json.handoff, 'handoff 应存在')
   assert.ok(!('logs' in td.json.handoff), 'handoffView 不应含 logs')
   assert.ok(!('workspace' in td.json.handoff), 'handoffView 不应含 workspace（避免回显绝对路径）')
+})
+
+/* ══════════════════════════════════════════════════════════════════
+ * 6b. 副机接入（pair-info：配对码生成 + token 披露边界）
+ * ══════════════════════════════════════════════════════════════════ */
+
+test('UI pair-info：形状正确 —— hubUrl 用传入端口，码可被 decodePairCode 解回', async (t) => {
+  const root = tmpRoot(t)
+  const relay = await startRelay(t)
+  const env = await setup(t, { root, relay })
+
+  const r = await env.get(`${UI}/pair-info?port=19387`)
+  assert.equal(r.json.ok, true)
+  assert.equal(r.json.port, 19387)
+  assert.equal(r.json.tokenSet, false)
+  assert.equal(r.json.scope, 'tokenless')
+  assert.ok(Array.isArray(r.json.codes))
+  assert.ok(typeof r.json.firewallHint === 'string' && r.json.firewallHint.includes('19387'))
+  // 无 token 的码必须真的不含 token
+  for (const c of r.json.codes) {
+    assert.equal(c.includesToken, false)
+    const dec = decodePairCode(c.pairCode)
+    assert.ok(dec.ok, `码应可解析：${dec.ok ? '' : dec.error}`)
+    assert.equal(dec.payload.hubUrl, c.hubUrl)
+    assert.equal(dec.payload.token, undefined)
+  }
+  // 非 loopback 测试同款断言：明文 token 不得出现在任何响应里
+  assert.ok(!/nt_[A-Za-z0-9_-]{8,}/.test(r.text), '响应不应含明文 token')
+})
+
+test('UI pair-info：本机回环请求 → 完整配对码含 token（可解回原文）', async (t) => {
+  const root = tmpRoot(t)
+  const relay = await startRelay(t)
+  // 测试客户端从 127.0.0.1 连入 = 回环 = 允许含 token 的完整码
+  const env = await setup(t, { root, relay, nodeToken: 'nt_testtoken123' })
+
+  const r = await env.get(`${UI}/pair-info?port=19999`)
+  assert.equal(r.json.scope, 'full')
+  assert.equal(r.json.tokenSet, true)
+  assert.ok(r.json.codes.length >= 1, '本机至少应有一个局域网地址')
+  for (const c of r.json.codes) {
+    assert.equal(c.includesToken, true)
+    const dec = decodePairCode(c.pairCode)
+    assert.ok(dec.ok)
+    assert.equal(dec.payload.token, 'nt_testtoken123', '回环请求拿到的码要能用（token 原样编入）')
+    assert.equal(new URL(dec.payload.hubUrl).port, '19999')
+  }
+})
+
+test('UI pair-info：非回环请求 → 只给不含 token 的码（lanBind 暴露面收紧）', async (t) => {
+  // 直接构造 handler：真实 HTTP 客户端只会从 127.0.0.1 连入，
+  // 非回环语义用伪造 req（remoteAddress=局域网地址）直接打到 handler 上验证。
+  const captured = []
+  const ctx = {
+    webServer: { register: (r) => { captured.push(r); return () => {} } },
+    connection: undefined,
+  }
+  registerUiRoutes({
+    ctx,
+    registry: { list: () => [], getNode: () => null, onlineNodes: () => [] },
+    pulls: {},
+    log: () => {},
+    config: { role: 'hub', nodeToken: 'nt_secret123' },
+  })
+  const handler = captured.find((r) => r.path === '/api/remote-agent/ui/pair-info').handler
+
+  const fakeRes = () => {
+    const out = { statusCode: 0, headers: null, body: '' }
+    return {
+      out,
+      writeHead(status, headers) { out.statusCode = status; out.headers = headers },
+      end(payload) { out.body = payload ?? '' },
+    }
+  }
+  const fakeReq = (remote) => ({
+    method: 'GET',
+    url: '/api/remote-agent/ui/pair-info?port=19387',
+    headers: {},
+    socket: { remoteAddress: remote },
+  })
+
+  // 局域网来源（模拟 lanBind 后另一台机器打开面板）
+  const res1 = fakeRes()
+  await handler(fakeReq('192.168.5.9'), res1)
+  const body1 = JSON.parse(res1.out.body)
+  assert.equal(body1.scope, 'tokenless', '非回环必须拿不到含 token 的码')
+  for (const c of body1.codes) assert.equal(c.includesToken, false)
+  const dec1 = decodePairCode(body1.codes[0]?.pairCode ?? '')
+  if (dec1.ok) assert.equal(dec1.payload.token, undefined)
+
+  // 回环来源（对照：同一 handler，回环给全码）
+  const res2 = fakeRes()
+  await handler(fakeReq('127.0.0.1'), res2)
+  const body2 = JSON.parse(res2.out.body)
+  assert.equal(body2.scope, 'full')
+  assert.equal(decodePairCode(body2.codes[0].pairCode).payload.token, 'nt_secret123')
 })
 
 /* ══════════════════════════════════════════════════════════════════
