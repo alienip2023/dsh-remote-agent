@@ -5,7 +5,7 @@ name: CI
 #      （例如 UI 路由前缀、投影调用点、围栏失败关闭）。它防的是"改了代码忘了改文档"
 #      这类**静默漂移**，比单元测试更容易被忽略。
 #   2. `test/*.test.js` —— 行为测试。
- 两条都在 `npm run check` 里，所以 check job 只跑这一条命令；lint（eslint 严格档）是第三条防线，独立 job 跑 `npm run lint`。
+ # 两条都在 `npm run check` 里，所以 check job 只跑这一条命令；lint（eslint 严格档）是第三条防线，独立 job 跑 `npm run lint`。
 #
 # 跨平台跑三档：本包支持 Windows / macOS / Linux（副机侧有平台分支与
 # 编码差异），只跑 Linux 会漏掉 Windows 专有的路径分隔符与 GBK 编码问题 ——
