@@ -49,6 +49,9 @@ function makeCopy(t) {
     // 降级链断言（50~54）读 deploy/relay-vps/ 的四个模板文件 ——
     // 漏了整个目录，自检会整批 ENOENT（该脆弱点第三次踩到）。
     'deploy',
+    // 派发自动化评估断言（57~58）读 docs/dispatch-automation-eval.md ——
+    // 与 deploy 同类的脆弱点，加 read() 目标必须同步这里。
+    'docs',
     // 向导断言（36~39）会读 lib/setup.js 并检查 bin/dsh-remote-setup.js 存在 ——
     // 漏了这里，全部用例会因 ENOENT 失败而不是断言失效（该脆弱点已踩过两次）。
     'lib/setup.js',
@@ -303,4 +306,12 @@ test('自检：unit 模板删掉加固段必须被检出', (t) => {
   )
   assert.equal(code, 1, `削弱加固段应被检出（exit 1），实际 exit ${code}`)
   assert.match(out, /\[53\]/, '应报出 53')
+})
+
+test('自检：删掉派发自动化评估文档必须被检出', (t) => {
+  const dir = makeCopy(t)
+  fs.rmSync(path.join(dir, 'docs/dispatch-automation-eval.md'))
+  const { code, out } = runCheck(dir)
+  assert.equal(code, 1, `删评估文档应被检出（exit 1），实际 exit ${code}`)
+  assert.match(out, /\[57\]/, '应报出 57')
 })

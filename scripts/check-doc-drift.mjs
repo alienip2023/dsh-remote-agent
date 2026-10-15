@@ -567,6 +567,24 @@ check('49', '真实运行时自检脚本存在，KNOWN-ISSUES 第 8 节记录验
     /降级链/.test(rootReadme) && /deploy\/relay-vps\//.test(rootReadme)
     && pkg.files?.includes('deploy'),
     'README.md 接入路径段 + package.json files')
+
+  // 派发自动化评估（P1-7）：决策记录是"删了不会有测试变红"的知识，
+  // 与 KNOWN-ISSUES 各节同规格钉住。三个锚点对应三个结论：
+  // 设计使然（B）/ 预设计未实施（A2）/ 明确拒绝（A1）。
+  // 存在性守卫：文档被删时报 DRIFT 而不是让 read() 抛栈 ——
+  // 自检用例「删文档必须被检出」依赖这个形态（与 28.x 同风格）。
+  const automationEvalPath = path.join(ROOT, 'docs/dispatch-automation-eval.md')
+  const automationEval = fs.existsSync(automationEvalPath)
+    ? read('docs/dispatch-automation-eval.md')
+    : ''
+  check('57', '派发自动化评估文档存在且三个结论锚点齐全',
+    automationEval !== ''
+    && /设计使然/.test(automationEval) && /预设计/.test(automationEval)
+    && /明确拒绝/.test(automationEval) && /pair-info/.test(automationEval),
+    'docs/dispatch-automation-eval.md（B/A2/A1 三结论 + scope 不含 pair-info）')
+  check('58', 'KNOWN-ISSUES §8 第 3 条链接到评估文档',
+    /dispatch-automation-eval\.md/.test(known) && /整台 401/.test(known),
+    'KNOWN-ISSUES.md §8 第 3 条')
 }
 
 /* ── 输出 ── */

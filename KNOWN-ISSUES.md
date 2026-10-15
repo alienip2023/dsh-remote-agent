@@ -570,6 +570,8 @@ $env:DSH_REMOTE_PWSH = 'C:\nope\pwsh.exe'
    - UI 路由不裸奔，设计如此、行为正确；
    - 但**自动化脚本无法代替桌面会话派发任务** —— 发布自检因此设计成
      「挂载 + 人肉派发 + 自动监视」（见下）。
+     该边界的去留已评估并记录在 [docs/dispatch-automation-eval.md](docs/dispatch-automation-eval.md)：
+     结论是**设计使然**，短时令牌方案已预设计（未实施），静态 bearer 明确拒绝。
 
 ### 待用户 30 秒验证（工具已就绪）
 

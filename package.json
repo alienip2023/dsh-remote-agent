@@ -45,6 +45,7 @@
     "lib",
     "bin",
     "deploy",
+    "docs",
     "profiles",
     "scripts",
     "cordis.patch.yml",
