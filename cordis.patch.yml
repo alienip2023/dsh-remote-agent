@@ -48,17 +48,26 @@
 # 所以在**行上**声明 inject：框架会**推迟本行的激活**直到这些服务就绪，只 apply
 # 一次、没有子 fiber 抖动。这是唯一被验证可用的形态。
 #
-# 副作用与取舍：worker（副机）不需要 webServer/tools/systemPrompt。若副机 profile
-# 里没有这些服务，本行会一直 PENDING 而不激活 —— 所以**副机必须覆盖掉这个 inject**：
-#     - id: remote-agent
-#       inject: []          # ← 副机加这一行清空依赖
-#       config:
-#         role: worker
-#         ...
-# 见 profiles/worker.cordis.yml。
+# ── 为什么 inject 只声明 webServer（2026-10-15 修订）────────────────────
+#
+# `inject` 必须**跟着角色走**，而角色在首次安装时**还不知道**（只有用户知道）：
+#
+#   role: ''（未配置）→ 只需要 webServer —— 够注册引导路由，让面板显示选择界面
+#   role: hub         → webServer + tools + systemPrompt（注册路由与工具）
+#   role: worker      → tools + agentLoop + sessions
+#                       （agent 的 ctx **继承本行的依赖声明**，少了 tools 就
+#                        挂不上 shell/文件工具 —— 实测踩过这个坑）
+#
+# 而包内 patch 只能写一份。所以这里取**最小集**（webServer），并让"选角色"
+# 那一步（面板引导 / 命令行向导）**把正确的 inject 一起写进 profile** ——
+# 用户只需要选一次角色，两个字段自动配好，不会再出现"改了 role 忘了改 inject"。
+#
+# 这也顺带修了一个历史问题：旧默认值是 hub 的 inject（三个服务）。副机装完
+# 若没覆盖 inject，本行会一直 PENDING 而不激活 —— 副机永远不拨入，
+# 且**没有任何报错**。
 - insert:
     - id: remote-agent
       name: dsh-remote-agent
-      inject: ['webServer', 'tools', 'systemPrompt']
+      inject: ['webServer']
       config:
-        role: hub
+        role: ''
