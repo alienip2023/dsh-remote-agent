@@ -86,7 +86,7 @@ relay 侧未动：`lib/relay.js` 的 close 处理器有 `rec.conn === conn` 守�
 
 **状态**：正常，无需改动。此条记录一个**曾被误判为缺陷**的现象，避免后续维护者重复调查。
 
-面板的浏览器半边（`lib/client.js`）依赖 `dsh.client` 声明投递，**已在 DSH 44.0.0 验证可用**。
+面板的浏览器半边（`lib/client.js`）依赖 `dsh.client` 声明投递，**已在 DSH 0.2.0-rc.2 验证可用**。
 
 ### 投递方式：combo 路由（`rev` 必需）
 

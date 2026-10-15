@@ -1,0 +1,73 @@
+name: CI
+
+# 这个包的质量防线有两条：
+#   1. `scripts/check-doc-drift.mjs` —— 断言文档与代码的关键约定一致
+#      （例如 UI 路由前缀、投影调用点、围栏失败关闭）。它防的是"改了代码忘了改文档"
+#      这类**静默漂移**，比单元测试更容易被忽略。
+#   2. `test/*.test.js` —— 行为测试。
+# 两条都在 `npm run check` 里，所以 CI 只跑这一条命令。
+#
+# 跨平台跑三档：本包支持 Windows / macOS / Linux（副机侧有平台分支与
+# 编码差异），只跑 Linux 会漏掉 Windows 专有的路径分隔符与 GBK 编码问题 ——
+# 我们实际踩过 PowerShell 落盘 GBK 导致源码损坏的坑。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一分支的新推送取消旧的运行，省额度。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.os }} / node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['22.x', '24.x']
+        exclude:
+          # 三平台 × 两 Node 版本 = 6 组。macOS 只跑一个版本，够覆盖
+          # POSIX 分支即可，省一半额度。
+          - os: macos-latest
+            node: '22.x'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # 本包**零外部 npm 依赖**（只用 node: 内置模块 + 一个 peer 的 schemastery）。
+      # 所以不装依赖也能跑测试 —— 这正是它能直接从 git 安装的原因。
+      # 这里仍跑一次 install，为了验证 package.json 与 lockfile 自洽。
+      - name: Install (lockfile 自洽性)
+        run: npm install --no-audit --no-fund
+
+      - name: Check (doc drift + tests)
+        run: npm run check
+
+      # 单独把测试结果再跑一遍，便于在 CI 日志里定位失败的是哪条。
+      # `npm run check` 若在 drift 阶段就失败，测试根本不会跑。
+      - name: Tests (verbose on failure)
+        if: failure()
+        run: npm test
+
+  # 独立的一档：验证包能被 git 安装路径解析（DSH 的实际安装方式）。
+  # 只检查 package.json 的 files/exports 与实际文件一致，不真的装 DSH。
+  packaging:
+    name: packaging (files/exports 一致性)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - name: package.json 里 files 列出的路径必须存在
+        run: node scripts/check-packaging.mjs

@@ -1,0 +1,36 @@
+# 统一编辑器行为。这个包对"字节级一致性"有实际要求：
+#   - lib/** 是 DSH 直接加载的产物，行尾不一致会让 diff 噪声吞掉真实改动
+#   - 源码里含中文注释，必须 UTF-8（Windows 上曾因 GBK 落盘损坏过源码）
+#   - 缩进必须一致，否则 check-doc-drift 的正则锚点会失配
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+max_line_length = 120
+
+[*.md]
+# Markdown 里行尾双空格是"硬换行"，不能被剥掉。
+trim_trailing_whitespace = false
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[*.json]
+indent_size = 2
+
+[*.{cmd,bat}]
+# Windows 批处理必须是 CRLF，否则某些解析器会出问题。
+end_of_line = crlf
+
+[*.ps1]
+# PowerShell 脚本用 CRLF 更稳（跨版本行为差异）。
+end_of_line = crlf
+
+[LICENSE]
+# 许可证文本保持原样。
+trim_trailing_whitespace = false

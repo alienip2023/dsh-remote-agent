@@ -1,0 +1,160 @@
+name: Bug 报告
+description: 插件行为与预期不符
+title: '[Bug] '
+labels: ['bug', 'needs-triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        报告前请先：
+
+        1. 读 README 的「已知事项」与 [KNOWN-ISSUES.md](../blob/main/KNOWN-ISSUES.md) —— 可能已经有结论
+        2. 确认 `npm run check` 在本地能过（排除是你改过代码导致的）
+
+        **安全相关的问题请走 [SECURITY.md](../blob/main/SECURITY.md)，不要开公开 issue。**
+
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH 版本
+      description: '`resources/version` 的内容，或关于对话框里显示的版本'
+      placeholder: 0.2.0-rc.2
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: 插件版本
+      description: '`node_modules/dsh-remote-agent/package.json` 里的 `version`'
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: role
+    attributes:
+      label: 本机角色
+      description: '`config.role`'
+      options:
+        - hub（主机 / 派活方）
+        - worker（副机 / 干活方）
+        - both（同机自测）
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: 传输方式
+      description: '`config.transportMode`'
+      options:
+        - direct
+        - relay
+        - 不确定
+    validations:
+      required: true
+
+  - type: input
+    id: network
+    attributes:
+      label: 网络环境
+      description: 两台机器怎么连的？**不要填真实 IP**，说清形态即可
+      placeholder: Tailscale 虚拟内网 / 同局域网 / 公网直连 / 经中继 VPS
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: 操作系统
+      description: 主机与副机分别写
+      placeholder: 主机 Windows 11 26100；副机 Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: textarea
+    id: symptom
+    attributes:
+      label: 现象
+      description: 你看到什么？期望什么？
+      value: |
+        **实际**：
+
+        **期望**：
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 越具体越好。能稳定复现吗？
+      value: |
+        1.
+        2.
+        3.
+
+        **能稳定复现吗**：
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志
+      description: |
+        贴之前**务必删掉**：token、内网 IP、绝对路径里的用户名、任何凭证。
+        只保留能说明问题的最小片段。
+      value: |
+        <details>
+        <summary>主机侧（面板「日志尾部」，或 /api/remote-agent/healthz）</summary>
+
+        ```
+        ```
+
+        </details>
+
+        <details>
+        <summary>副机侧（%TEMP%\dsh-remote-agent-diag.log）</summary>
+
+        ```
+        ```
+
+        </details>
+
+        <details>
+        <summary>启动日志（<DSH_HOME>/logs/ 或 %APPDATA%\@deepseek-ai\dsh-desktop\logs）</summary>
+
+        ```
+        ```
+
+        </details>
+    validations:
+      required: false
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: 已尝试
+      description: 你排查过什么？排除了什么可能？这能避免我们重复劳动。
+      placeholder: |
+        例如：确认副机在线（remote_nodes 显示 online）；exec 模式正常，只有 agent 模式不行。
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: 配置
+      description: 贴相关的那几行 config，**删掉 token 的值**
+      render: yaml
+      value: |
+        - id: remote-agent
+          name: dsh-remote-agent
+          inject: []          # 副机才有这一行
+          config:
+            role: worker
+            # ...
+    validations:
+      required: false

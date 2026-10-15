@@ -260,9 +260,96 @@ check('25', 'exports["./client"] 指向 lib/client.js',
 check('26', 'KNOWN-ISSUES 记录了 combo 路由与 404 正常性',
   /combo/.test(known) && /404/.test(known), 'KNOWN-ISSUES.md 第 4 节')
 
-/* ── 27. 文档声明的 DSH 版本 ── */
-check('27', 'KNOWN-ISSUES 声明了验证的 DSH 版本',
-  /DSH\s*44\.0\.0|44\.0\.0/.test(known), 'KNOWN-ISSUES.md')
+/* ── 27. 文档声明的 DSH 版本 ──
+ *
+ * 这个版本号**必须**与实际验证过的 DSH 一致 —— 早先这里写的是 "44.0.0"，
+ * 而实测环境是 0.2.0-rc.2。断言当时也跟着写错，等于没防。
+ * 现在锚定到真实版本；升 DSH 时两边一起改。
+ */
+check('27', 'KNOWN-ISSUES 声明了验证的 DSH 版本（0.2.0-rc.2）',
+  /0\.2\.0-rc\.2/.test(known), 'KNOWN-ISSUES.md')
+
+/* ── 28. 长期维护项目的基本设施 ──
+ *
+ * 这些文件不参与运行，但缺了会让项目难以被他人接手。
+ * 断言存在性即可 —— 内容质量靠人工评审，没法自动判断。
+ */
+const MAINT_FILES = [
+  ['CHANGELOG.md', '记录每个修复的根因，0.x 期间升级前必读'],
+  ['CONTRIBUTING.md', '贡献指南（含会静默失败的陷阱）'],
+  ['SECURITY.md', '安全策略与部署检查清单'],
+  ['.editorconfig', '统一编辑器行为（行尾/编码/缩进）'],
+  ['.github/workflows/ci.yml', 'CI：打包自洽 + 文档漂移 + 测试'],
+  ['.github/PULL_REQUEST_TEMPLATE.md', 'PR 模板'],
+  ['.github/ISSUE_TEMPLATE/bug_report.yml', 'Bug 报告模板'],
+  ['.github/ISSUE_TEMPLATE/feature_request.yml', '功能请求模板'],
+]
+for (const [i, [file, why]] of MAINT_FILES.entries()) {
+  check(`28.${i + 1}`, `维护设施存在：${file}`,
+    fs.existsSync(path.join(ROOT, file)), why)
+}
+
+/* ── 29~31. 副机配置必须写明 inject: [] ──
+ *
+ * 部署必读：包内 patch 给 remote-agent 行声明了
+ * inject: ['webServer','tools','systemPrompt']（hub 需要），而副机没有这些服务。
+ * 不清空的话该行永远停在 PENDING、永不激活 —— 副机永远不拨入，
+ * 且没有任何报错（实测踩到）。
+ */
+{
+  const workerProfile = read('profiles/worker.cordis.yml')
+  const readme = read('README.md')
+  check('29', 'profiles/worker.cordis.yml 里有 inject: []',
+    /^\s*inject:\s*\[\]\s*$/m.test(workerProfile),
+    'profiles/worker.cordis.yml（副机不清空 inject 会永远 PENDING）')
+  check('30', 'README 说明了副机为什么要写 inject: []',
+    /inject:\s*\[\]/.test(readme) && /PENDING/.test(readme),
+    'README.md（副机配置一节）')
+  check('31', '包内 cordis.patch.yml 声明了 hub 需要的 inject',
+    /inject:\s*\[[^\]]*webServer[^\]]*\]/.test(read('cordis.patch.yml')),
+    'cordis.patch.yml')
+}
+
+/* ── 32~35. 工具返回值收口层 ──
+ *
+ * DSH 对工具返回值有两条独立校验（序列化 + schema），两条失败都会让
+ * 「已成功的调用」报失败 —— 有副作用却报失败，是最坏的失败形态。
+ * 收口层在 reg() 里，必须同时应用 dropNullForSchema 与 toPlainJson，且顺序固定。
+ */
+{
+  const t = read('lib/hub/tools.js')
+  check('32', 'tools.js 定义了 dropNullForSchema',
+    /function dropNullForSchema/.test(t), 'lib/hub/tools.js')
+  check('33', 'tools.js 定义了 toPlainJson',
+    /function toPlainJson/.test(t), 'lib/hub/tools.js')
+  check('34', 'reg() 里两者都应用且顺序正确（dropNull 在内层）',
+    (() => {
+      const i = t.indexOf('const reg = (definition) => {')
+      if (i < 0) return false
+      // 边界用花括号配对 —— 不能用 `\n  }`，reg 内部有更深缩进的 `}` 会截断 body。
+      let depth = 0
+      let end = -1
+      for (let k = t.indexOf('{', i); k < t.length; k += 1) {
+        if (t[k] === '{') depth += 1
+        else if (t[k] === '}') {
+          depth -= 1
+          if (depth === 0) { end = k + 1; break }
+        }
+      }
+      if (end < 0) return false
+      const body = t.slice(i, end)
+      // ⚠ 顺序检查不能比较字符串位置：源码里写的是
+      //     return toPlainJson(dropNullForSchema(value, schema))
+      // `toPlainJson(` 在**源码位置上更靠前**，但执行顺序是**从内到外** ——
+      // 先 dropNullForSchema，再 toPlainJson。所以必须断言**嵌套关系**。
+      // （第一版用了 indexOf 比较位置，恒为 false，是假断言。）
+      return /toPlainJson\(\s*dropNullForSchema\(value,\s*schema\)\s*\)/.test(body)
+    })(),
+    'lib/hub/tools.js 的 reg()（dropNullForSchema 必须在 toPlainJson 内层）')
+  check('35', '有工具返回值出边界的回归测试',
+    fs.existsSync(path.join(ROOT, 'test', 'tool-output-plain.test.js')),
+    'test/tool-output-plain.test.js')
+}
 
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)

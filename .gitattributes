@@ -27,6 +27,11 @@
 # 无扩展名的可执行脚本
 LICENSE   text eol=lf
 
+# lockfile：必须 LF，且**要提交** —— 它让 `npm install` 的结果可复现，
+# 也用于验证 package.json 自洽（见 scripts/check-packaging.mjs）。
+pnpm-lock.yaml text eol=lf
+package-lock.json text eol=lf
+
 # 二进制：不做转换
 *.png     binary
 *.jpg     binary

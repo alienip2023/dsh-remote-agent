@@ -44,8 +44,11 @@
     "profiles",
     "scripts",
     "cordis.patch.yml",
-    "KNOWN-ISSUES.md",
     "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "KNOWN-ISSUES.md",
     "LICENSE"
   ],
   "dsh": {
@@ -75,6 +78,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "check:docs": "node scripts/check-doc-drift.mjs",
-    "check": "npm run check:docs && npm test"
+    "check:packaging": "node scripts/check-packaging.mjs",
+    "check": "npm run check:packaging && npm run check:docs && npm test"
   }
 }

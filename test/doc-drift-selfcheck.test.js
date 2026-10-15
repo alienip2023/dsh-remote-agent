@@ -31,8 +31,14 @@ function makeCopy(t) {
   // 清单必须覆盖 check-doc-drift.mjs 会读的**每一个**文件：
   // lib/client.js、lib/hub/*、lib/hub/index.js、lib/node/*、lib/index.js、
   // lib/protocol.js、lib/glob.js、lib/relay.js、profiles/README.md、
-  // KNOWN-ISSUES.md、package.json。
-  // 早先漏了 lib/client.js，导致所有用例都因 ENOENT 失败（包括"干净副本必须通过"）。
+  // KNOWN-ISSUES.md、package.json、README.md、cordis.patch.yml，
+  // 以及断言 28 检查存在性的那些维护设施（CHANGELOG/CONTRIBUTING/SECURITY/
+  // .editorconfig/.github/*）。
+  //
+  // ⚠ 这个清单是**脆弱点**：check-doc-drift 每新增一个 read() 目标，
+  // 这里就要跟着加，否则所有用例都会因 ENOENT 失败（而不是因为断言失效）。
+  // 已经踩过两次（漏 lib/client.js、漏 README.md）。
+  // 加目标时的稳妥做法：本地跑 `npm test`，若整批失败且错误是 ENOENT，就是这里漏了。
   const entries = [
     'lib/client.js',
     'lib/index.js',
@@ -43,8 +49,16 @@ function makeCopy(t) {
     'lib/node',
     'profiles',
     'scripts',
+    'test',
     'package.json',
     'KNOWN-ISSUES.md',
+    'README.md',
+    'CHANGELOG.md',
+    'CONTRIBUTING.md',
+    'SECURITY.md',
+    'cordis.patch.yml',
+    '.editorconfig',
+    '.github',
   ]
   for (const rel of entries) {
     const src = path.join(ROOT, rel)

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题（不要开公开 issue）
+    url: https://github.com/zbzbhs/dsh-remote-agent/security/advisories/new
+    about: 绕过 roots/denyPaths/uiPullRoot 边界、未授权注册节点、响应体字段泄漏等，请走私密报告。
+  - name: 已知问题与刻意不做的项
+    url: https://github.com/zbzbhs/dsh-remote-agent/blob/main/KNOWN-ISSUES.md
+    about: 提 issue 前先看这里 —— 有些是刻意取舍，有些已有结论。
+  - name: 部署与配置问题
+    url: https://github.com/zbzbhs/dsh-remote-agent/blob/main/profiles/README.md
+    about: 三种接入路径（双方 NAT 后 / 一方有公网 / 隧道）的配置片段与验证命令。

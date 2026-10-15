@@ -8,6 +8,7 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+*~
 
 # Node
 node_modules/
@@ -16,9 +17,13 @@ pnpm-debug.log*
 yarn-error.log*
 
 # Local scratch: logs, throwaway probes
+#
+# _probe/ 与 scratch/ 是**排查现场**，不属于源码。诊断脚本、临时抓包、
+# 复现用例都往这里放，别提交。
 *.log
 tmp/
 scratch/
+_probe/
 
 # ---------------------------------------------------------------------------
 # 注意：lib/** 是**故意提交**的。
