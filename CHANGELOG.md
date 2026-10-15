@@ -11,6 +11,29 @@
 
 ## [Unreleased]
 
+### 新增：配对码（pair）—— 副机配置从三行抄写变成一行粘贴
+
+副机部署最容易抄错的就是 `hubUrl` / `token` 两行（少半个斜杠、token 带尾部
+空白，表现都是"副机永远不上线"且无报错）。配对码把连接信息压成一行
+`dshra1://` + base64url(JSON)：
+
+- **`lib/pairing.js`**（零依赖纯函数）：`encodePairCode` / `decodePairCode` /
+  `expandPairConfig`。解析对终端复制形态全容错（换行/引号/空白），所有
+  坏输入返回结构化中文错误**永不抛** —— worker 启动路径 pair 无效只降级
+  记警告，副机 dsh 照常起来。
+- **两条安全语义**：①配对码内含 token，等同凭证（文档明确传阅规矩）；
+  ②`roots` 不进配对码 —— 副机的安全边界永远由副机配置声明，主机侧的串
+  决定不了它。
+- **显式配置优先**：`pair` 与 `hubUrl` 同时存在时 `hubUrl` 生效，方便临时
+  换地址调试；展开成功后 `pair` 键从配置对象里删除（token 不存两份）。
+- **三处接线**：worker `startWorker` 首行展开 pair；doctor 静态检查基于
+  展开后的配置（坏 pair 单独一条 ✗ 带修法）；向导 hub 路径输出配对码、
+  worker 路径可整行粘贴自动填充、非交互 `--role worker --pair dshra1://…`
+  直接出配置、`--role hub --hub-ip …` 顺手生成配对码。
+- 17 条回归（往返矩阵 / 容错矩阵 / 展开优先级 / doctor 与 YAML 接线 /
+  applyWorker 降级路径）；doc-drift 断言 42~44 钉住"README 有入口、worker
+  真的展开、向导真的生成"三件事。
+
 ### 新增：小白向导 + remote_task 支持指定副机模型
 
 #### `bin/dsh-remote-setup.js` —— 配置向导（小白也能配好）

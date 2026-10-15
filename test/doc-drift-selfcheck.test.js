@@ -48,6 +48,9 @@ function makeCopy(t) {
     // 向导断言（36~39）会读 lib/setup.js 并检查 bin/dsh-remote-setup.js 存在 ——
     // 漏了这里，全部用例会因 ENOENT 失败而不是断言失效（该脆弱点已踩过两次）。
     'lib/setup.js',
+    // 配对码断言（42~44）读 lib/pairing.js 与 bin/dsh-remote-setup.js ——
+    // bin 已在上面，这里补 pairing（该脆弱点历史上已踩过两次）。
+    'lib/pairing.js',
     'bin',
     'lib/hub',
     'lib/node',

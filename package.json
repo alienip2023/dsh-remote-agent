@@ -28,6 +28,7 @@
     "./hub": "./lib/hub/index.js",
     "./worker": "./lib/node/index.js",
     "./protocol": "./lib/protocol.js",
+    "./pairing": "./lib/pairing.js",
     "./relay": "./lib/relay.js",
     "./setup": "./lib/setup.js",
     "./package.json": "./package.json",

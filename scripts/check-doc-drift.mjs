@@ -385,6 +385,33 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
     'README.md remote_task 参数表 + lib/protocol.js')
 }
 
+/* ── 42~44. 配对码（lib/pairing.js） ──
+ *
+ * 配对码的核心承诺必须钉住：
+ *   - README 有用法入口（否则这个功能等于不存在）
+ *   - worker 启动路径真的展开 pair（只在 lib/pairing.js 里定义而没接线 = 假功能）
+ *   - 向导真的生成配对码（encodePairCode 必须被 bin 引用）
+ *   - "显式配置优先" 与 "roots 不进配对码" 两条安全语义要在文档里说清
+ */
+{
+  const pairing = read('lib/pairing.js')
+  const nodeIndex = read('lib/node/index.js')
+  const setupBin = read('bin/dsh-remote-setup.js')
+  const rootReadme = read('README.md')
+  check('42', 'README 说明了配对码（dshra1://）与显式配置优先/roots 不进码的安全语义',
+    /dshra1:\/\//.test(rootReadme) && /显式配置优先/.test(rootReadme) && /roots.*不在配对码|roots 不在配对码/.test(rootReadme),
+    'README.md 副机配置一节')
+  check('43', 'worker 启动路径真的展开 pair（expandPairConfig 被接线）',
+    /expandPairConfig/.test(nodeIndex) && /export function expandPairConfig/.test(pairing),
+    'lib/node/index.js startWorker + lib/pairing.js')
+  check('44', '向导生成/解析配对码（encodePairCode 与 decodePairCode 均被 bin 引用）',
+    /encodePairCode/.test(setupBin) && /decodePairCode/.test(setupBin),
+    'bin/dsh-remote-setup.js')
+  check('44b', '配对码解析失败永不抛（结构化 error，worker 只降级）',
+    /export function decodePairCode/.test(pairing) && /return \{ ok: false, error/.test(pairing),
+    'lib/pairing.js decodePairCode')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

@@ -27,6 +27,7 @@ import {
   renderDoctor,
   friendlyConnectError,
 } from '../lib/setup.js'
+import { encodePairCode, decodePairCode } from '../lib/pairing.js'
 
 const DIM = '\x1b[2m'
 const RESET = '\x1b[0m'
@@ -63,6 +64,7 @@ function parseCliArgs() {
         port: { type: 'string' },
         token: { type: 'string' },
         'node-id': { type: 'string' },
+        pair: { type: 'string' }, // worker 非交互：直接用配对码
         roots: { type: 'string' }, // 逗号分隔
         out: { type: 'string' }, // 写文件而不是打印
         help: { type: 'boolean', default: false },
@@ -120,6 +122,7 @@ async function runDoctor(positionals) {
     token: grab('token'),
     nodeToken: grab('nodeToken'),
     nodeId: grab('nodeId'),
+    pair: grab('pair'),
     roots,
     uiPullRoot: grab('uiPullRoot'),
   }
@@ -182,15 +185,31 @@ async function wizard() {
 
     // ── token：hub 生成、worker 粘贴 ───────────────────────────
     let hubToken = ''
+    let pairPrefill = null // 配对码解析结果（worker 路径用）
+    let pairRaw = '' // 用户粘贴的原始配对码串
     if (isHub) {
       hubToken = newNodeToken()
       hint(`③ 已为你生成副机入网口令（nodeToken，粘到副机配置里）：`)
       say(`    ${hubToken}`)
       say('')
     } else {
-      hubToken = await ask(rl, '③ 主机的 nodeToken（在主机上跑本向导会生成；留空仅限完全可信内网）', {
+      const tok = await ask(rl, '③ 主机的 nodeToken，或直接粘贴主机给的整行配对码（dshra1:// 开头）', {
         def: '',
       })
+      if (tok.toLowerCase().startsWith('dshra1://')) {
+        const dec = decodePairCode(tok)
+        if (!dec.ok) {
+          say(`  ✗ ${dec.error}`)
+          hint('  下面继续按手动方式配置。')
+        } else {
+          pairPrefill = dec.payload
+          pairRaw = tok
+          hubToken = dec.payload.token ?? ''
+          hint('✓ 配对码已识别 —— 地址与 token 自动填好，后面几步直接回车即可')
+        }
+      } else {
+        hubToken = tok
+      }
     }
 
     let workerYaml = ''
@@ -208,31 +227,40 @@ async function wizard() {
         def: '19387',
         validate: (v) => (/^\d+$/.test(v) && +v > 0 && +v < 65536 ? true : '1-65535 的数字'),
       })
-      const hubUrl = buildHubUrl(ipPick, +port)
       const nodeId = await ask(rl, '⑥ 这台主机的节点 id 留空即可；副机的节点 id（如 slave-pc）', { def: '' })
+      const hubUrl = buildHubUrl(ipPick, +port)
+      const workerNodeId = nodeId !== '' ? nodeId : 'slave-pc'
+      const pairCode = encodePairCode({ hubUrl, token: hubToken, nodeId: workerNodeId })
 
       printYaml('主机（hub）：粘到 DSH 的 cordis 配置里', buildHubYaml({ token: hubToken, roots }))
+      // 配对码：最不容易抄错的一条路 —— 一行代替 hubUrl+token+transportMode。
+      say('')
+      say(`${BOLD}=== 副机（worker）配对码 —— 首选：整行复制发给副机 ===${RESET}`)
+      say(`    ${pairCode}`)
+      hint('  （内含 token，等同凭证：当面或加密聊天传，别贴公开群里）')
+      say('')
+      // 显式 YAML 作为备份/排查用（配对码展开后的形态）
       workerYaml = buildWorkerYaml({
         hubUrl,
         token: hubToken,
-        nodeId: nodeId !== '' ? nodeId : 'slave-pc',
+        nodeId: workerNodeId,
         roots,
       })
-      printYaml(`副机（worker）配置 —— 抄到另一台电脑的 DSH 里（注意 inject: [] 已替你填好）`, workerYaml)
+      printYaml('副机（worker）显式配置 —— 备用：不想用配对码就抄这一段（inject: [] 已替你填好）', workerYaml)
       say('')
       hint(`最后一步（Windows 主机）：放行防火墙端口 ${port} ——`)
       hint(`  netsh advfirewall firewall add rule name="dsh-remote-agent" dir=in action=allow protocol=TCP localport=${port}`)
     } else {
       // ── worker：hubUrl ──────────────────────────────────────
       const hubUrl = await ask(rl, '④ 主机地址（形如 ws://192.168.1.10:19387/api/remote-agent/node，或只给 IP:端口）', {
-        def: '',
+        def: pairPrefill?.hubUrl ?? '',
         validate: (v) => {
           if (v === '') return '不能为空'
           const norm = buildHubUrl(v, 19387)
           return (norm !== '' ? true : '解析不了，示例：192.168.1.10:19387 或完整 ws:// 地址')
         },
       })
-      const nodeId = await ask(rl, '⑤ 本机节点 id（留空用主机名）', { def: '' })
+      const nodeId = await ask(rl, '⑤ 本机节点 id（留空用主机名）', { def: pairPrefill?.nodeId ?? '' })
       const finalUrl = buildHubUrl(hubUrl, 19387)
       const u = new URL(finalUrl)
       hint(`⑥ 探活 ${u.host} …`)
@@ -241,13 +269,18 @@ async function wizard() {
       else say(`  ✗ ${r.error}`)
       say('')
 
-      workerYaml = buildWorkerYaml({
-        hubUrl: finalUrl,
-        token: hubToken,
-        nodeId,
-        roots,
-      })
+      // 配对码路径：字段没被手动改动时，直接输出 pair 一行版（最少可抄错的内容）
+      const usedPair = pairPrefill
+        && finalUrl === buildHubUrl(pairPrefill.hubUrl, 19387)
+        && nodeId === (pairPrefill.nodeId ?? '')
+        && hubToken === (pairPrefill.token ?? '')
+      workerYaml = usedPair
+        ? buildWorkerYaml({ pair: pairRaw, nodeId, roots })
+        : buildWorkerYaml({ hubUrl: finalUrl, token: hubToken, nodeId, roots })
       printYaml('副机（worker）：粘到这台机器 DSH 的 cordis 配置里', workerYaml)
+      if (usedPair) {
+        hint('（pair 一行在运行时自动展开成 hubUrl/token，显式配置优先 —— 改地址时写 hubUrl 即可覆盖）')
+      }
       if (!r.ok) {
         say('')
         hint('主机端口当前不可达 —— 先在主机上跑好并放行防火墙，再重启副机 DSH。')
@@ -274,16 +307,43 @@ function generateNonInteractive(values) {
   const token = String(values.token ?? '')
   if (role === 'hub') {
     printYaml('hub 配置', buildHubYaml({ token, roots }), values.out)
+    // 给了 --hub-ip（可选 --port）就顺手生成配对码 —— 副机一行 pair 即可接入
+    if (values['hub-ip']) {
+      const port = /^\d+$/.test(String(values.port ?? '')) ? +values.port : 19387
+      const hubUrl = buildHubUrl(values['hub-ip'], port)
+      const pairCode = encodePairCode({ hubUrl, token, nodeId: String(values['node-id'] ?? '') })
+      if (pairCode !== '') {
+        say('')
+        say('副机配对码（整行粘到副机配置的 pair: 字段，或用 --role worker --pair 生成配置）：')
+        say(`    ${pairCode}`)
+        say('    ⚠ 内含 token，等同凭证，勿贴公开渠道')
+      }
+    }
+    return
+  }
+  const nodeId = String(values['node-id'] ?? '')
+  // --pair：配对码直接展开成 worker 配置（最省事的非交互路径）
+  if (values.pair) {
+    const dec = decodePairCode(values.pair)
+    if (!dec.ok) {
+      say(`配对码无效：${dec.error}`)
+      process.exit(2)
+    }
+    printYaml(
+      'worker 配置（来自配对码）',
+      buildWorkerYaml({ pair: values.pair, nodeId, roots }),
+      values.out,
+    )
     return
   }
   const hubUrl = buildHubUrl(values['hub-url'] ?? '', 19387)
   if (hubUrl === '') {
-    say('--hub-url 必填，形如 192.168.1.10:19387 或完整 ws:// 地址')
+    say('--hub-url 必填，形如 192.168.1.10:19387 或完整 ws:// 地址（或改用 --pair 配对码）')
     process.exit(2)
   }
   printYaml(
     'worker 配置',
-    buildWorkerYaml({ hubUrl, token, nodeId: String(values['node-id'] ?? ''), roots }),
+    buildWorkerYaml({ hubUrl, token, nodeId, roots }),
     values.out,
   )
 }
@@ -295,7 +355,9 @@ if (values.help) {
   say('dsh-remote-setup —— dsh-remote-agent 配置向导（交互式 / 非交互 / 体检）')
   say('  node bin/dsh-remote-setup.js                 交互式生成两台的配置')
   say('  node bin/dsh-remote-setup.js --doctor <配置.yml>     体检现有配置')
-  say('  --role hub|worker --hub-url --token --node-id --roots a,b --out file.yml   非交互生成')
+  say('  --role hub --hub-ip 192.168.1.10 --token nt_xxx --roots a,b   非交互生成主机配置（附配对码）')
+  say('  --role worker --pair dshra1://... --roots a,b          非交互：用配对码生成副机配置')
+  say('  --role worker --hub-url --token --node-id --roots a,b  非交互：手动生成副机配置')
   process.exit(0)
 }
 if (values.doctor) await runDoctor(positionals)
