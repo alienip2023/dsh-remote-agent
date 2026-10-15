@@ -97,6 +97,42 @@ test('setup-routes 提供 state / apply 两个端点', () => {
   assert.match(setupRoutes, /SETUP_API_PREFIX\}\/apply/, '应有 apply 端点')
 })
 
+test('setup-routes 取 webServer 必须属性访问优先（ctx.get 默认 strict 会拿不到）', () => {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 这个坑实测踩过（2026-10-15），代价是整组引导路由静默不注册
+  // ═══════════════════════════════════════════════════════════════════════════
+  //
+  // cordis 的 `ctx.get(name, strict = true)` **默认只返回"提供者 fiber 当前
+  // 活跃"的服务**（源码注释原文："strict — when true, only return
+  // implementations whose providing fiber is currently active"）。
+  //
+  // 而 `registerSetupRoutes` 在 `apply()` 的**早期**被调用，那时 webServer
+  // 的提供者 fiber 可能还没激活 → `ctx.get('webServer')` 返回 undefined
+  // → 整组路由静默跳过 → `/api/remote-agent/setup/state` 落到 DSH 的
+  // `/api` prefix 围栏 → 返回**纯文本** `unauthorized`（与"路径不存在"
+  // **完全一样**的响应，实测极难排查：我一度以为路由注册成功但被围栏拦了）。
+  //
+  // 属性访问 `ctx.webServer` 走 `internal/get` waterfall + fiber store 查找，
+  // 能拿到已就绪的服务 —— `applyHub` 用的就是这个形态。
+  const code = stripComments(setupRoutes)
+  const i = code.indexOf('export function registerSetupRoutes')
+  assert.ok(i >= 0, '应存在 registerSetupRoutes')
+  const seg = code.slice(i, i + 1800)
+
+  assert.match(seg, /webServer\s*=\s*ctx\.webServer/, '必须优先用 ctx.webServer（属性访问）')
+  assert.match(seg, /ctx\.get\('webServer',\s*false\)/, "兜底必须是 ctx.get('webServer', false)（非严格）")
+})
+
+test('ui-routes 的 guard 取 connection 也必须属性访问优先', () => {
+  const uiRoutes = read('lib/hub/ui-routes.js')
+  const code = stripComments(uiRoutes)
+  const i = code.indexOf('function makeGuard(ctx, log)')
+  assert.ok(i >= 0, '应存在 makeGuard')
+  const seg = code.slice(i, i + 1100)
+  assert.match(seg, /connection\s*=\s*ctx\.connection/, '必须优先用 ctx.connection')
+  assert.match(seg, /ctx\.get\('connection',\s*false\)/, "兜底必须是 ctx.get('connection', false)")
+})
+
 test('setup 路由自带同源围栏（exact 绕过 /api prefix 围栏）', () => {
   const code = stripComments(setupRoutes)
   assert.match(code, /function makeGuard\(/, '应定义 guard')
