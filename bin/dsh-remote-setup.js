@@ -26,6 +26,9 @@ import {
   doctorChecks,
   renderDoctor,
   friendlyConnectError,
+  patchFilePath,
+  listDshProfiles,
+  writePatchBlock,
 } from '../lib/setup.js'
 import { encodePairCode, decodePairCode } from '../lib/pairing.js'
 
@@ -67,6 +70,10 @@ function parseCliArgs() {
         pair: { type: 'string' }, // worker 非交互：直接用配对码
         roots: { type: 'string' }, // 逗号分隔
         out: { type: 'string' }, // 写文件而不是打印
+        write: { type: 'boolean', default: false }, // 非交互：直接写进 DSH 配置（自动备份）
+        'no-write': { type: 'boolean', default: false }, // 交互：禁止写盘询问（只输出）
+        force: { type: 'boolean', default: false }, // 有手写 remote-agent 条目时强制写入
+        profile: { type: 'string' }, // dsh profile 名（默认 desktop）
         help: { type: 'boolean', default: false },
       },
       strict: true,
@@ -95,6 +102,40 @@ function printYaml(name, yaml, outFile) {
   say('')
   say(`${BOLD}=== ${name} ===${RESET}`)
   say(yaml)
+}
+
+/**
+ * 询问并把 YAML 写进本机 DSH 配置（备份 → 托管块合并 → 校验，失败自动回滚）。
+ * 写盘是零终端小白的"最后一公里"：不用自己找配置文件、开编辑器、粘 YAML。
+ */
+async function offerWrite(rl, values, yaml, roleLabel) {
+  if (values['no-write']) return false
+  const profile = String(values.profile ?? '').trim() || 'desktop'
+  const file = patchFilePath(profile)
+  const profiles = listDshProfiles()
+  if (profiles.length === 0 && !fs.existsSync(file)) {
+    hint(`未找到 DSH 配置（${file}）—— 确认这台机器装了 DSH？下面保持只输出，请你手动粘贴。`)
+    return false
+  }
+  const yes = await ask(rl, `要把这份${roleLabel}配置直接写进 DSH 吗？（自动备份原文件；profile=${profile}）`, {
+    def: 'Y',
+    validate: (v) => (['y', 'yes', 'n', 'no', '1', '0'].includes(v.toLowerCase()) || '输 Y 或 N'),
+  })
+  if (!['y', 'yes', '1'].includes(yes.toLowerCase())) return false
+  return applyWrite({ file, blockYaml: yaml, force: values.force === true })
+}
+
+/** 非交互写盘执行 + 结果播报。返回 true = 成功。 */
+function applyWrite({ file, blockYaml, force }) {
+  const r = writePatchBlock({ file, blockYaml, force })
+  if (r.ok) {
+    say(`  ✓ 已${r.mode === 'replaced' ? '更新（原托管块替换）' : '写入（追加托管块）'} ${r.file}`)
+    say(`    （原文件已备份：${r.backup}）`)
+    hint('  重启 DSH 后生效。')
+  } else {
+    say(`  ✗ ${r.error}`)
+  }
+  return r.ok
 }
 
 /* ══════════════════ doctor ══════════════════ */
@@ -232,7 +273,9 @@ async function wizard() {
       const workerNodeId = nodeId !== '' ? nodeId : 'slave-pc'
       const pairCode = encodePairCode({ hubUrl, token: hubToken, nodeId: workerNodeId })
 
-      printYaml('主机（hub）：粘到 DSH 的 cordis 配置里', buildHubYaml({ token: hubToken, roots }))
+      const hubYaml = buildHubYaml({ token: hubToken, roots })
+      printYaml('主机（hub）：粘到 DSH 的 cordis 配置里', hubYaml)
+      await offerWrite(rl, values, hubYaml, '主机（hub）')
       // 配对码：最不容易抄错的一条路 —— 一行代替 hubUrl+token+transportMode。
       say('')
       say(`${BOLD}=== 副机（worker）配对码 —— 首选：整行复制发给副机 ===${RESET}`)
@@ -278,6 +321,7 @@ async function wizard() {
         ? buildWorkerYaml({ pair: pairRaw, nodeId, roots })
         : buildWorkerYaml({ hubUrl: finalUrl, token: hubToken, nodeId, roots })
       printYaml('副机（worker）：粘到这台机器 DSH 的 cordis 配置里', workerYaml)
+      await offerWrite(rl, values, workerYaml, '副机（worker）')
       if (usedPair) {
         hint('（pair 一行在运行时自动展开成 hubUrl/token，显式配置优先 —— 改地址时写 hubUrl 即可覆盖）')
       }
@@ -305,8 +349,11 @@ function generateNonInteractive(values) {
   }
   const roots = normalizeRoots(splitRoots(values.roots)).clean
   const token = String(values.token ?? '')
+  const profile = String(values.profile ?? '').trim() || 'desktop'
+  const writeFile = patchFilePath(profile)
   if (role === 'hub') {
-    printYaml('hub 配置', buildHubYaml({ token, roots }), values.out)
+    const hubYaml = buildHubYaml({ token, roots })
+    printYaml('hub 配置', hubYaml, values.out)
     // 给了 --hub-ip（可选 --port）就顺手生成配对码 —— 副机一行 pair 即可接入
     if (values['hub-ip']) {
       const port = /^\d+$/.test(String(values.port ?? '')) ? +values.port : 19387
@@ -319,6 +366,9 @@ function generateNonInteractive(values) {
         say('    ⚠ 内含 token，等同凭证，勿贴公开渠道')
       }
     }
+    if (values.write) {
+      if (!applyWrite({ file: writeFile, blockYaml: hubYaml, force: values.force === true })) process.exit(2)
+    }
     return
   }
   const nodeId = String(values['node-id'] ?? '')
@@ -329,11 +379,11 @@ function generateNonInteractive(values) {
       say(`配对码无效：${dec.error}`)
       process.exit(2)
     }
-    printYaml(
-      'worker 配置（来自配对码）',
-      buildWorkerYaml({ pair: values.pair, nodeId, roots }),
-      values.out,
-    )
+    const workerYaml = buildWorkerYaml({ pair: values.pair, nodeId, roots })
+    printYaml('worker 配置（来自配对码）', workerYaml, values.out)
+    if (values.write) {
+      if (!applyWrite({ file: writeFile, blockYaml: workerYaml, force: values.force === true })) process.exit(2)
+    }
     return
   }
   const hubUrl = buildHubUrl(values['hub-url'] ?? '', 19387)
@@ -341,11 +391,11 @@ function generateNonInteractive(values) {
     say('--hub-url 必填，形如 192.168.1.10:19387 或完整 ws:// 地址（或改用 --pair 配对码）')
     process.exit(2)
   }
-  printYaml(
-    'worker 配置',
-    buildWorkerYaml({ hubUrl, token, nodeId, roots }),
-    values.out,
-  )
+  const workerYaml = buildWorkerYaml({ hubUrl, token, nodeId, roots })
+  printYaml('worker 配置', workerYaml, values.out)
+  if (values.write) {
+    if (!applyWrite({ file: writeFile, blockYaml: workerYaml, force: values.force === true })) process.exit(2)
+  }
 }
 
 /* ══════════════════ 入口 ══════════════════ */
@@ -358,6 +408,8 @@ if (values.help) {
   say('  --role hub --hub-ip 192.168.1.10 --token nt_xxx --roots a,b   非交互生成主机配置（附配对码）')
   say('  --role worker --pair dshra1://... --roots a,b          非交互：用配对码生成副机配置')
   say('  --role worker --hub-url --token --node-id --roots a,b  非交互：手动生成副机配置')
+  say('  写盘（免手粘，自动备份原配置）：交互式回车确认，或非交互加 --write')
+  say('  --profile desktop   指定 dsh profile（默认 desktop）  --force  覆盖手写条目')
   process.exit(0)
 }
 if (values.doctor) await runDoctor(positionals)
