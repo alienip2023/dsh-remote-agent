@@ -472,10 +472,22 @@ test('restrictPermissions：Windows 上走 icacls 去掉继承并只授权当前
   const file = path.join(dir, 'cred.txt')
   fs.writeFileSync(file, 'secret')
 
-  // 收窄前：继承来的 ACL 里包含 SYSTEM / Administrators / Users 等
+  // 收窄前：继承来的 ACL 里包含 SYSTEM / Administrators / Users 等。
+  //
+  // 前置条件不能"期望环境刚好给"：GH Actions 的新 Windows runner 镜像
+  // （Server 2025 系）的 Temp 目录可能不带可继承 DACL，新建文件天然没有
+  // (I) 标记 —— 那是环境特性，不是被测代码回归。显式 `icacls /reset`
+  // 把 DACL 还原成"从父目录继承"，让前置条件在任何 Windows 上确定成立；
+  // /reset 之后仍无 (I) 才说明环境真不支持，显式 skip（不静默放行也不假红）。
+  const reset = spawnSync('icacls', [file, '/reset'], { encoding: 'utf8', timeout: 10000, windowsHide: true })
   const before = spawnSync('icacls', [file], { encoding: 'utf8', timeout: 10000, windowsHide: true })
   if (before.status !== 0) {
     t.skip('本机 icacls 不可用')
+    return
+  }
+  if (!/\(I\)/.test(before.stdout)) {
+    if (reset.status !== 0) t.skip('icacls /reset 不可用，无法构造继承前置条件')
+    else t.skip('该环境的临时目录不传播继承 ACL（前置条件缺失），无法验证继承移除')
     return
   }
   assert.match(before.stdout, /\(I\)/, '前置条件：初始 ACL 应带继承标记（否则本用例守了个空）')

@@ -213,8 +213,15 @@ test('resolveOnPath：在 PATH 里找到真实存在的可执行文件', (t) => 
   isolateResolution(t, [dirA, dirB])
 
   assert.ok(samePath(resolveOnPath('mytool.exe'), want))
-  // 带扩展名时不再追加 PATHEXT 候选
-  assert.ok(samePath(resolveOnPath('mytool'), want), '不带扩展名时应命中 .EXE 候选')
+  if (process.platform === 'win32') {
+    // 带扩展名时不再追加 PATHEXT 候选（PATHEXT 是 Windows 语义）
+    assert.ok(samePath(resolveOnPath('mytool'), want), '不带扩展名时应命中 .EXE 候选')
+  } else {
+    // POSIX 分支 exts=['']：没有扩展名补全，只有**精确文件名**才命中 ——
+    // 'mytool' 不存在（盘上是 mytool.exe），如实返回空串。
+    // 此前无条件断言 .EXE 补全，CI 的 Ubuntu runner 上假红（实现是对的）。
+    assert.equal(resolveOnPath('mytool'), '', 'POSIX 无 PATHEXT 补全：非精确名不命中')
+  }
 })
 
 test('resolveOnPath：全部不存在时返回空串（不编造路径）', (t) => {
@@ -224,14 +231,21 @@ test('resolveOnPath：全部不存在时返回空串（不编造路径）', (t) 
   assert.equal(resolveOnPath('definitely-not-here'), '')
 })
 
-test('resolveOnPath：目录按 PATH 声明顺序，扩展名按 PATHEXT 声明顺序', (t) => {
+test('resolveOnPath：目录按 PATH 声明顺序，扩展名按 PATHEXT 声明顺序（Windows）', (t) => {
   const dirA = tmpdir(t, 'dsh-ord-a-')
   const dirB = tmpdir(t, 'dsh-ord-b-')
   const first = fakeExe(dirA, 'dup.exe')
   fakeExe(dirB, 'dup.exe')
-  // PATH 顺序：A 在前 → 取 A 的
+  // PATH 顺序：A 在前 → 取 A 的（带扩展名查询，两平台语义一致）
   isolateResolution(t, [dirA, dirB])
   assert.ok(samePath(resolveOnPath('dup.exe'), first), 'PATH 靠前的目录优先')
+
+  if (process.platform !== 'win32') {
+    // POSIX：无 PATHEXT 语义，无扩展名查询只认精确文件名。
+    // 此前无条件断言 PATHEXT 顺序，CI 的 Ubuntu runner 上假红（实现是对的）。
+    assert.equal(resolveOnPath('dup'), '', 'POSIX 无扩展名补全')
+    return
+  }
 
   // PATHEXT 顺序：.BAT 在前 → 不带扩展名的查询命中 .BAT 候选。
   // 注意返回值的扩展名大小写由 PATHEXT 决定（'order.BAT'），
@@ -437,12 +451,16 @@ test('wrapPowerShell：真实 PowerShell 下失败 cmdlet 得到非 0，成功�
   assert.equal(bad.code, 1, '失败的 cmdlet 必须得到非 0（否则失败任务会被上报成 completed）')
   assert.ok(bad.stderr.length > 0, '失败时 stderr 必须有可读信息')
 
-  // native 非 0 退出码必须原样传出，而不是被折成 1
-  const native = runPowerShell(ps, wrapPowerShell('cmd /c exit 7'))
+  // native 非 0 退出码必须原样传出，而不是被折成 1。
+  // 探针命令按平台给：cmd 只在 Windows 有；Linux 的 pwsh 用 sh。
+  // （此前无条件用 `cmd /c exit 7`，CI 的 Ubuntu pwsh 上假红 —— cmd 不存在。）
+  const nativeProbe = process.platform === 'win32' ? 'cmd /c exit 7' : "sh -c 'exit 7'"
+  const native = runPowerShell(ps, wrapPowerShell(nativeProbe))
   assert.equal(native.code, 7, 'native 非 0 退出码应原样传出')
 
   // 先成功的 native 命令留下 0，不得掩盖后续 cmdlet 的失败
-  const masked = runPowerShell(ps, wrapPowerShell("cmd /c exit 0\nGet-Item 'C:\\definitely\\missing\\dsh-nope'"))
+  const maskedProbe = process.platform === 'win32' ? 'cmd /c exit 0' : "sh -c 'exit 0'"
+  const masked = runPowerShell(ps, wrapPowerShell(`${maskedProbe}\nGet-Item 'C:\\definitely\\missing\\dsh-nope'`))
   assert.equal(masked.code, 1, '先前的 $LASTEXITCODE=0 不得把后续 cmdlet 失败掩盖成成功')
 
   // 反向对照（negative control）：`& { }` 形态确实会把失败折成 0。
@@ -606,6 +624,39 @@ test('resolveWorkspace：允许根内通过，根外与相对路径被拒', (t) 
   assert.throws(
     () => resolveWorkspace('', { roots: [root], caseInsensitive: ci }),
     (e) => e.code === ERROR_CODE.WORKSPACE_DENIED && /no workspace given/.test(e.message),
+  )
+})
+
+test('resolveWorkspace：roots 的别名形态（符号链接 / 8.3 短名）必须与 target 的 realpath 口径一致', (t) => {
+  // 根因回归：target 被 realpath（展开符号链接与 8.3 短名）而 roots 只做
+  // 字面归一 —— 两边形态不同 → 前缀比对假阳性拒绝。真实触发场景：
+  // GH Actions Windows runner 的 TEMP 是 `C:\Users\RUNNER~1\...`（8.3 短名），
+  // os.tmpdir() 派生的 roots 保持短名，而子路径 realpath 成 runneradmin 长名，
+  // 明明在根内却被判 workspace-denied（CI 上 5 条测试假红的同一根因）。
+  // 用户配置符号链接目录 / 8.3 形态路径同理。用符号链接别名复现同一错位。
+  const base = tmpdir(t, 'dsh-alias-')
+  const real = path.join(base, 'real')
+  fs.mkdirSync(real)
+  const link = path.join(base, 'link')
+  try {
+    fs.symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir')
+  } catch {
+    t.skip('当前环境无法创建符号链接/junction')
+    return
+  }
+  const inside = path.join(real, 'proj')
+  fs.mkdirSync(inside)
+  // roots 用别名、workspace 用真身 —— 修复前这里抛 workspace-denied
+  assert.equal(
+    resolveWorkspace(inside, { roots: [link], caseInsensitive: true }),
+    fs.realpathSync.native(inside),
+  )
+  // 反向同样要过：roots 用真身、workspace 从别名进入
+  const viaLink = path.join(link, 'proj2')
+  fs.mkdirSync(viaLink)
+  assert.equal(
+    resolveWorkspace(viaLink, { roots: [real], caseInsensitive: true }),
+    fs.realpathSync.native(viaLink),
   )
 })
 
