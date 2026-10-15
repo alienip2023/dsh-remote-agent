@@ -13,6 +13,7 @@
  */
 import readline from 'node:readline/promises'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import {
@@ -31,6 +32,7 @@ import {
   writePatchBlock,
 } from '../lib/setup.js'
 import { encodePairCode, decodePairCode } from '../lib/pairing.js'
+import { IDENTITY_FILE_NAME, readHubIdentity } from '../lib/identity.js'
 
 const DIM = '\x1b[2m'
 const RESET = '\x1b[0m'
@@ -271,7 +273,8 @@ async function wizard() {
       const nodeId = await ask(rl, '⑥ 这台主机的节点 id 留空即可；副机的节点 id（如 slave-pc）', { def: '' })
       const hubUrl = buildHubUrl(ipPick, +port)
       const workerNodeId = nodeId !== '' ? nodeId : 'slave-pc'
-      const pairCode = encodePairCode({ hubUrl, token: hubToken, nodeId: workerNodeId })
+      const hubFingerprint = hubFingerprintForPairCode()
+      const pairCode = encodePairCode({ hubUrl, token: hubToken, nodeId: workerNodeId, hubFingerprint })
 
       const hubYaml = buildHubYaml({ token: hubToken, roots })
       printYaml('主机（hub）：粘到 DSH 的 cordis 配置里', hubYaml)
@@ -281,6 +284,9 @@ async function wizard() {
       say(`${BOLD}=== 副机（worker）配对码 —— 首选：整行复制发给副机 ===${RESET}`)
       say(`    ${pairCode}`)
       hint('  （内含 token，等同凭证：当面或加密聊天传，别贴公开群里）')
+      if (hubFingerprint !== '') {
+        hint(`  （已带 hub 指纹 ${hubFingerprint} —— 副机粘码即完成身份钉住，假 hub 冒充会被当场拒绝）`)
+      }
       say('')
       // 显式 YAML 作为备份/排查用（配对码展开后的形态）
       workerYaml = buildWorkerYaml({
@@ -288,6 +294,7 @@ async function wizard() {
         token: hubToken,
         nodeId: workerNodeId,
         roots,
+        pinnedHubFingerprint: hubFingerprint,
       })
       printYaml('副机（worker）显式配置 —— 备用：不想用配对码就抄这一段（inject: [] 已替你填好）', workerYaml)
       say('')
@@ -319,7 +326,7 @@ async function wizard() {
         && hubToken === (pairPrefill.token ?? '')
       workerYaml = usedPair
         ? buildWorkerYaml({ pair: pairRaw, nodeId, roots })
-        : buildWorkerYaml({ hubUrl: finalUrl, token: hubToken, nodeId, roots })
+        : buildWorkerYaml({ hubUrl: finalUrl, token: hubToken, nodeId, roots, pinnedHubFingerprint: pairPrefill?.hubFingerprint ?? '' })
       printYaml('副机（worker）：粘到这台机器 DSH 的 cordis 配置里', workerYaml)
       await offerWrite(rl, values, workerYaml, '副机（worker）')
       if (usedPair) {
@@ -336,6 +343,23 @@ async function wizard() {
     hint('出问题时用 --doctor 体检；详见 README「五分钟上手」。')
   } finally {
     rl.close()
+  }
+}
+
+/**
+ * 读 hub 身份指纹用于配对码（P2-11）。
+ *
+ * 读不到（hub 还没在机上启动过 / 文件损坏）就返回 '' —— 配对码照常出，
+ * 只是少带指纹；绝不阻塞出码。注意：hub 配置了自定义 stateDir 时这里读的
+ * 是默认目录（~/.dsh-remote-agent），可能错过 —— 高级用户请显式写
+ * pinnedHubFingerprint，向导只覆盖常见路径。
+ */
+function hubFingerprintForPairCode() {
+  try {
+    const id = readHubIdentity(path.join(os.homedir(), '.dsh-remote-agent', IDENTITY_FILE_NAME))
+    return id?.fingerprint ?? ''
+  } catch {
+    return ''
   }
 }
 
@@ -358,7 +382,7 @@ function generateNonInteractive(values) {
     if (values['hub-ip']) {
       const port = /^\d+$/.test(String(values.port ?? '')) ? +values.port : 19387
       const hubUrl = buildHubUrl(values['hub-ip'], port)
-      const pairCode = encodePairCode({ hubUrl, token, nodeId: String(values['node-id'] ?? '') })
+      const pairCode = encodePairCode({ hubUrl, token, nodeId: String(values['node-id'] ?? ''), hubFingerprint: hubFingerprintForPairCode() })
       if (pairCode !== '') {
         say('')
         say('副机配对码（整行粘到副机配置的 pair: 字段，或用 --role worker --pair 生成配置）：')
