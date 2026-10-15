@@ -11,6 +11,20 @@
 
 ## [Unreleased]
 
+### 新增：向导写盘 + Windows 双击入口 —— 零终端部署闭环
+
+- **向导写盘**（`lib/setup.js`）：自动探测 `~/.dsh/profiles/<profile>/cordis.patch.yml`
+  （`cordis.yml` 是空壳，实测确认），备份 → 托管块合并 → 校验，失败自动回滚。
+  托管块幂等（跑两次零变化）；检测到**手写** remote-agent 条目默认拒绝并点名
+  `--force`（同 id 重复 = 插件挂载两次 = 启动失败）。交互式回车即写，
+  非交互 `--write / --force / --profile`。
+- **双击入口**（`bin/双击运行-配置向导.cmd`）：零终端第一道墙。
+  内容 ASCII（cmd 按 OEM 码页解析批处理）、CRLF 行尾，字节级断言钉住
+  （doc-drift 48）；参数透传 `%*`，快捷方式可带参。`.gitattributes` 钉 CRLF。
+- **零终端路线图**（README）：双击 → 回车 → 面板「副机接入」复制配对码 →
+  副机向导粘贴自动写盘 → 重启，全程不碰 YAML 不开终端手敲命令。
+- 测试：write-config 15 条；全量 501+；doc-drift 79/79。
+
 ### 新增：Web 面板 GUI 化 —— 副机接入按钮 + 派单模型输入
 
 零终端小白的图形入口（面板是 hub 侧唯一 GUI）：

@@ -433,6 +433,27 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
     'lib/client.js dispatch + README.md')
 }
 
+/* ── 48. Windows 双击入口 ──
+ *
+ * 零终端用户的第一道墙是"开终端"。启动器文件有两条硬规矩：
+ *   内容必须 ASCII（cmd.exe 按 OEM 码页解析批处理，非 ASCII 必乱码），
+ *   行尾必须 CRLF（LF-only 的批处理有解析边缘案例）。
+ * 文件名可以是中文（NTFS 是 Unicode），用字节级断言钉住这两条。
+ */
+{
+  const cmdPath = path.join(ROOT, 'bin', '双击运行-配置向导.cmd')
+  const ok48 = (() => {
+    if (!fs.existsSync(cmdPath)) return false
+    const buf = fs.readFileSync(cmdPath)
+    if (buf.some((b) => b > 127)) return false // 内容 ASCII
+    if (!buf.includes(Buffer.from('@echo off\r\n'))) return false // CRLF
+    return buf.includes(Buffer.from('dsh-remote-setup.js')) // 确实启动向导
+  })()
+  check('48', 'Windows 双击入口存在且 ASCII/CRLF 规范，README 有双击路径',
+    ok48 && /双击/.test(read('README.md')),
+    'bin/双击运行-配置向导.cmd + README.md')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

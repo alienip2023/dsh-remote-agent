@@ -47,3 +47,4 @@ package-lock.json text eol=lf
 
 # 二进制 / 生成物：git diff 与 merge 都无意义
 *.onnx    binary
+*.cmd text eol=crlf
