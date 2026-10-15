@@ -163,3 +163,38 @@ test('task-store 的 prune 必须有调用方（否则终态记录无限累积�
   assert.match(around, /try\s*\{/, 'prune 调用应包在 try 里')
   assert.match(around, /catch/, '应有 catch 兜底')
 })
+
+/* ─── 6. agent 的模型选择必须显式带上 ─── */
+
+test('runner.js：createAgent 必须带上默认模型选择', () => {
+  const code = stripComments(read('lib/node/runner.js'))
+  // 必须从 agentDefaultModel 取选择
+  assert.match(code, /ctx\.get\(['"]agentDefaultModel['"]\)/, '应从 agentDefaultModel 取默认模型')
+  assert.match(code, /currentSelection\(\)/, '应调用 currentSelection()')
+  // 不能写死 agentOptions: undefined（那会让 {{model}} 无值 → turn 1 抛错）
+  assert.ok(
+    !/agentOptions:\s*undefined,/.test(code),
+    'agentOptions 不能写死 undefined —— personafix 段的 {{model}} 会没有值',
+  )
+  // 要真的传进去
+  assert.match(code, /agentOptions,/, '应把取到的 agentOptions 传给 createAgent')
+})
+
+test('runner.js：agentOptions 的 provider/model 必须成对', () => {
+  const code = stripComments(read('lib/node/runner.js'))
+  // 只给 provider 不给 model（或反之）是无效选择 —— 应整体放弃
+  assert.match(code, /o\.provider\s*&&\s*o\.model\s*\?\s*o\s*:\s*undefined/, 'provider 与 model 必须成对校验')
+})
+
+test('runner.js：agentDefaultModel 缺失不能让 available 变 false', () => {
+  const code = stripComments(read('lib/node/runner.js'))
+  const i = code.indexOf('get available()')
+  assert.ok(i >= 0, '应存在 available getter')
+  const body = code.slice(i, i + 500)
+  // agentDefaultModel 是可选增益：缺了只是不传 agentOptions，
+  // 不该让整个 in-process 后端不可用（那会静默回退 headless，掩盖问题）
+  assert.ok(
+    !/agentDefaultModel/.test(body),
+    'available 不应依赖 agentDefaultModel —— 它缺了只是不传模型，不是不可用',
+  )
+})
