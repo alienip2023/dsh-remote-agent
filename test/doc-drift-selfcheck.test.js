@@ -58,6 +58,10 @@ function makeCopy(t) {
     // 配对码断言（42~44）读 lib/pairing.js 与 bin/dsh-remote-setup.js ——
     // bin 已在上面，这里补 pairing（该脆弱点历史上已踩过两次）。
     'lib/pairing.js',
+    // P2-11 断言（59~64）读 lib/identity.js —— lib/node 整目录已覆盖
+    // transport.js/hub-pin.js，但 identity 在 lib/ 根下，必须单独列
+    // （该脆弱点第四次踩到，注释留档）。
+    'lib/identity.js',
     'bin',
     'lib/hub',
     'lib/node',
@@ -314,4 +318,30 @@ test('自检：删掉派发自动化评估文档必须被检出', (t) => {
   const { code, out } = runCheck(dir)
   assert.equal(code, 1, `删评估文档应被检出（exit 1），实际 exit ${code}`)
   assert.match(out, /\[57\]/, '应报出 57')
+})
+
+test('自检：SECURITY.md 删掉 hub 身份认证的关键锚点必须被检出', (t) => {
+  // P2-11 断言 59 钉 hub-identity-pending（宽限窗口语义的关键词，
+  // 在 SECURITY.md 全文只出现一次）—— 删掉它文档就承诺不了"窗口内任务被拦"。
+  const { code, out } = probe(
+    t,
+    (src) => src.replaceAll('hub-identity-pending', ''),
+    'SECURITY.md',
+  )
+  assert.equal(code, 1, `删宽限窗口锚点应被检出（exit 1），实际 exit ${code}`)
+  assert.match(out, /\[59\]/, '应报出 59')
+})
+
+test('自检：transport.js 删掉身份宽限窗口必须被检出', (t) => {
+  // P2-11 断言 63 钉副机侧验证链的函数名 —— relay 宽限窗口的
+  // armIdentityGrace 被改名/删除时，文档承诺就落了空。
+  // ⚠ 替换目标不能包含原锚点作为前缀（'armIdentityGraceRemoved' 仍会命中
+  // /armIdentityGrace/，变异等于没做）—— 用完全不含锚点的词。
+  const { code, out } = probe(
+    t,
+    (src) => src.replaceAll('armIdentityGrace', 'removedGraceHook'),
+    'lib/node/transport.js',
+  )
+  assert.equal(code, 1, `删宽限窗口方法应被检出（exit 1），实际 exit ${code}`)
+  assert.match(out, /\[63\]/, '应报出 63')
 })

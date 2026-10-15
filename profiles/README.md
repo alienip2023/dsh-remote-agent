@@ -539,8 +539,35 @@ curl -sS -X POST http://127.0.0.1:8890/api/remote-agent/ui/pull \
 | 侧栏图标点了没反应 | `sidebar.panellist` 的 id 与 `main` 的 key 不一致（须同为 `dsh-remote-agent`） |
 | 副机 dsh 启动卡住 | 不应该发生：worker 侧不得有顶层网络 await。若出现请当 bug 报（记录日志与复现步骤） |
 | 中继自己挂了（healthz 打不开） | 任务不受影响：副机本地跑完，重连后 task/sync 补齐。修中继或按降级链临时切路径 |
+| 副机日志报 `hub 身份验证失败` | 指纹与已钉住的不一致。先确认有没有人动过 hub：主动换 hub / 重装 → 删副机 `~/.dsh-remote-agent/hub-pin.json` 重启重新钉住；否则按中间人排查。见第 7 节 |
+| 副机上线后任务全部 `hub-identity-pending` | relay 模式下在等 hub 追发身份帧（15s 宽限窗口）。hub 是旧版且副机已有 pin → 升级 hub；hub 正常时几秒内自愈 |
 | 公网裸 `ws://` 心里没底 | 套 TLS：`deploy/relay-vps/` 的 Caddyfile / nginx.conf，两端换 `wss://`，token 不变 |
 
 **日志里只看指纹**：`RELAY_READY url=ws://... hub=<12位指纹> enroll=<12位指纹>`。
 要核对两端 token 是不是同一套，**比指纹**，不要把明文贴进任何工单或聊天记录。
 `relay-init.sh` / `relay-init.ps1` 的结尾汇总也只打指纹；明文只有 `--print-tokens` 才输出。
+
+---
+
+## 7. hub 身份认证与指纹钉住（P2-11，默认开启）
+
+一句话：**副机也会验主机**。hub 第一次启动生成持久 ed25519 身份（指纹形如
+`hubfp1-xxxx…`，落在 `~/.dsh-remote-agent/hub-identity.json`，0600），副机
+首连自动把指纹钉住（TOFU），之后谁要冒充 hub —— 假 hub、假中继都一样 ——
+会被当场拒绝、停止重连、日志大声报错。
+
+- **配对码已带指纹**：向导生成的 `dshra1://…` 码自动携带 `hubFingerprint`
+  字段，副机粘码即完成"连接配置 + 身份钉住"，零终端。
+- **显式钉住**：手动配置在副机 config 写
+  `pinnedHubFingerprint: hubfp1-…`（显式配置优先于 TOFU）。
+- **TOFU 状态**在副机 `~/.dsh-remote-agent/hub-pin.json`；确认主动换 hub
+  后删掉它重启即可重新钉住 —— 指纹不匹配时它**不会**被自动清除，
+  这是故意的（失败持续可见，修法走人工确认）。
+- **relay 模式**：hub 身份帧是节点上线后追发的，副机给 15 秒宽限；窗口内
+  到来的任务会被暂拒（`hub-identity-pending`），验证通过自动恢复。已有
+  pin 但身份帧一直不来 → 拒绝上线（身份帧可能被中间人剥掉）。
+- **自己换了 hubUrl / relayUrl**：pin 里记录了旧地址，副机会提示 re-pin 并
+  重新钉住，不用手动清状态（这是本地配置行为，远程攻击者改不了）。
+
+安全语义、验证链五环与剩余边界详见 [SECURITY.md](../SECURITY.md) 的
+检查清单第 7 条。

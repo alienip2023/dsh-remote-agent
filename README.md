@@ -144,6 +144,14 @@ dsh plugin add github:zbzbhs/dsh-remote-agent
 > 显式配置优先：`pair` 与 `hubUrl` 同时存在时 `hubUrl` 生效，方便临时换地址调试。
 > 配对码坏了不会让副机起不来 —— 只记一条警告并按未配置处理（`--doctor` 会报）。
 
+> **hub 身份认证（默认开启）**：副机也会验主机。hub 首次启动生成持久身份
+> （指纹 `hubfp1-…`，落 `~/.dsh-remote-agent/hub-identity.json`），配对码
+> 自动携带指纹 —— 副机粘码即完成首连钉住（TOFU，状态在副机
+> `~/.dsh-remote-agent/hub-pin.json`）。手动配置可写
+> `pinnedHubFingerprint: hubfp1-…` 显式钉住；之后指纹不匹配 = 拒绝上线并
+> 停止重连（确认主动换 hub 后删 `hub-pin.json` 重启即可重新钉住）。
+> 详见 [SECURITY.md](SECURITY.md) 检查清单第 7 条。
+
 > **为什么副机要写 `inject: []`**
 >
 > 包内 `cordis.patch.yml` 给这一行声明了

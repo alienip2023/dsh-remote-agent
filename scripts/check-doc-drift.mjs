@@ -585,6 +585,59 @@ check('49', '真实运行时自检脚本存在，KNOWN-ISSUES 第 8 节记录验
   check('58', 'KNOWN-ISSUES §8 第 3 条链接到评估文档',
     /dispatch-automation-eval\.md/.test(known) && /整台 401/.test(known),
     'KNOWN-ISSUES.md §8 第 3 条')
+
+  // ── P2-11：hub 身份认证（指纹钉住 / TOFU / relay 宽限窗口）──────────
+  // 文档承诺的验证链与三态语义必须与代码实际存在的锚点一一对应：
+  // 文档侧（59-61、64）钉 SECURITY/profiles/README/CHANGELOG，
+  // 代码侧（62-63）钉 hub 与副机两条接线的核心函数名。
+  const p2Transport = read('lib/node/transport.js')
+  const p2HubPin = read('lib/node/hub-pin.js')
+  const p2Identity = read('lib/identity.js')
+  const p2Changelog = read('CHANGELOG.md')
+  const p2Pairing = read('lib/pairing.js')
+  const p2Registry = read('lib/hub/node-registry.js')
+  const p2HubIdx = read('lib/hub/index.js')
+  const p2NodeIdx = read('lib/node/index.js')
+  const p2SetupBin = read('bin/dsh-remote-setup.js')
+  const p2Profiles = read('profiles/README.md')
+
+  check('59', 'SECURITY.md：威胁模型有副机验 hub 行，检查清单第 7 条覆盖 TOFU/宽限/剩余边界',
+    /副机能识别/.test(security) && /pinnedHubFingerprint/.test(security)
+    && /hub-identity\.json/.test(security) && /hub-pin\.json/.test(security)
+    && /TOFU/.test(security) && /hub-identity-pending/.test(security)
+    && /宽限/.test(security) && /剩余边界/.test(security),
+    'SECURITY.md 检查清单第 7 条 + 威胁模型表')
+
+  check('60', 'profiles/README.md：有 hub 身份认证一节 + 排障表两行',
+    /hubFingerprint/.test(p2Profiles) && /hub-pin\.json/.test(p2Profiles)
+    && /重新钉住/.test(p2Profiles) && /hub-identity-pending/.test(p2Profiles)
+    && /SECURITY\.md/.test(p2Profiles),
+    'profiles/README.md 第 7 节 + 排障速查')
+
+  check('61', 'README worker 配置段说明 hub 身份认证与 pinnedHubFingerprint',
+    /pinnedHubFingerprint/.test(rootReadme) && /hub-pin\.json/.test(rootReadme)
+    && /TOFU/.test(rootReadme),
+    'README.md 副机配置段')
+
+  check('62', '代码锚点（hub 侧）：身份加载 / welcome 带 identity / relay 追发 / 配对码带指纹都在',
+    /loadOrCreateHubIdentity/.test(p2HubIdx) && /stateDir/.test(p2HubIdx)
+    && /sendIdentityFrame/.test(p2Registry) && /buildIdentityPayload/.test(p2Registry)
+    && /hubFingerprint/.test(p2Pairing)
+    && /hubFingerprintForPairCode/.test(p2SetupBin),
+    'lib/hub/index.js + node-registry.js + lib/pairing.js + bin/dsh-remote-setup.js')
+
+  check('63', '代码锚点（副机侧）：验证链五环 / 宽限窗口 / TOFU 落盘 / 任务拦截都在',
+    /verifyHubIdentity/.test(p2Transport) && /armIdentityGrace/.test(p2Transport)
+    && /pinnedFingerprint/.test(p2Transport) && /failHubIdentity/.test(p2Transport)
+    && /saveHubPin/.test(p2HubPin) && /loadHubPin/.test(p2HubPin)
+    && /normalizeFingerprint/.test(p2Identity) && /writeJsonAtomic/.test(p2Identity)
+    && /HUB_IDENTITY_PENDING/.test(p2NodeIdx) && /pinnedHubFingerprint/.test(p2NodeIdx),
+    'lib/node/transport.js + hub-pin.js + lib/identity.js + lib/node/index.js')
+
+  check('64', 'CHANGELOG 未发布段记录 P2-11（身份认证 + TOFU + 宽限窗口）',
+    /身份认证/.test(p2Changelog) && /TOFU/.test(p2Changelog)
+    && /hub-identity-pending/.test(p2Changelog) && /hubFingerprint/.test(p2Changelog),
+    'CHANGELOG.md [未发布] 段')
 }
 
 /* ── 输出 ── */

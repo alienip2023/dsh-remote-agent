@@ -54,6 +54,29 @@
 复审触发条件已写入文档。KNOWN-ISSUES §8 第 3 条补链接；doc-drift
 新增 2 条断言（91 → 93）。
 
+### 安全：hub 身份认证 —— 副机也会验主机，假 hub / 假中继冒充被当场拒绝（P2-11）
+
+协议此前只有单向认证：副机拿 token 向 hub 证明自己，但 hub 从不向副机证明
+"我就是那个 hub"—— 假 hub 回一帧 welcome 副机就上线，假中继更可以直接
+冒充 hub 下发 `mode: exec`（副机任意代码执行）任务。本次补上反向认证：
+
+- **hub 持久身份**：首次启动生成 ed25519 密钥对，落盘
+  `<stateDir>/hub-identity.json`（0600，损坏就地重建 —— 已钉住旧指纹的副机
+  会大声失败，fail-closed）。direct 模式身份证明进 `welcome` 帧，relay 模式
+  节点上线后追发 `hub/identity` 帧（封堵"hub 握手期静默"的冒充窗口）。
+- **副机钉住**：配置 `pinnedHubFingerprint` 显式钉住；未配置则首连自动钉住
+  （TOFU，`<stateDir>/hub-pin.json`）。验证链五环：指纹自洽 → 匹配 pin →
+  验签 → nonce 回显（防重放）→ ±5 分钟时间窗；任一不过 = 拒绝上线 +
+  **停止重连** + 大声报错（pin 保留，人工确认后才重钉）。
+- **relay 宽限窗口**：上线后 15 秒内等 hub 身份帧；有 pin 超时 = 拒绝
+  （疑遭剥帧），无 pin 超时 = 旧版兼容继续；窗口内到达的任务一律回
+  `hub-identity-pending`，不会被拿去执行。
+- **零终端分发**：配对码新增 `hubFingerprint` 字段，向导出码自动携带 ——
+  副机粘码即完成"连接配置 + 指纹钉住"。
+- 向导 / README / profiles/README / SECURITY.md 同步；doc-drift 新增 6 条
+  断言（93 → 99）+ 自检复制清单补 `lib/identity.js` + 2 条变异负向用例；
+  全量 613 tests 612 pass（含 hub 身份原语黄金向量 6 组负向控制）。
+
 ---
 
 ## [0.2.0] — 2026-10-15
