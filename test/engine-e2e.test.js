@@ -157,7 +157,7 @@ test('engine e2e：exec 任务 → accept / summary(handoff) / end=completed', a
   const { engine, frames, workspace, store } = makeEngine(t, { root })
 
   const goal = writeFileCmd('out.txt', 'hello from engine')
-  const { accepted, record } = dispatchExec(engine, { goal, taskId: 't-exec-1', workspace })
+  const { accepted } = dispatchExec(engine, { goal, taskId: 't-exec-1', workspace })
   assert.equal(accepted, true)
 
   // task/accept 必须发出，且带 workspace / runner

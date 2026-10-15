@@ -298,12 +298,12 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
  */
 {
   const workerProfile = read('profiles/worker.cordis.yml')
-  const readme = read('README.md')
+  const rootReadme = read('README.md')
   check('29', 'profiles/worker.cordis.yml 里有 inject: []',
     /^\s*inject:\s*\[\]\s*$/m.test(workerProfile),
     'profiles/worker.cordis.yml（副机不清空 inject 会永远 PENDING）')
   check('30', 'README 说明了副机为什么要写 inject: []',
-    /inject:\s*\[\]/.test(readme) && /PENDING/.test(readme),
+    /inject:\s*\[\]/.test(rootReadme) && /PENDING/.test(rootReadme),
     'README.md（副机配置一节）')
   check('31', '包内 cordis.patch.yml 声明了 hub 需要的 inject',
     /inject:\s*\[[^\]]*webServer[^\]]*\]/.test(read('cordis.patch.yml')),
@@ -362,8 +362,8 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
  */
 {
   const registry = read('lib/hub/node-registry.js')
-  const hubTools = read('lib/hub/tools.js')
-  const uiRoutes = read('lib/hub/ui-routes.js')
+  const hubToolsSrc = read('lib/hub/tools.js')
+  const uiRoutesSrc = read('lib/hub/ui-routes.js')
   const clientSrc = read('lib/client.js')
   const hubIdx = read('lib/hub/index.js')
 
@@ -380,8 +380,8 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
     'lib/hub/node-registry.js 的 applySync + lib/hub/index.js 的 limits 默认值')
 
   check('43', '提供了立即清理的入口（工具 + UI 路由 + 面板按钮）',
-    /name:\s*'remote_purge'/.test(hubTools)
-    && /UI_API_PREFIX\}\/purge/.test(uiRoutes)
+    /name:\s*'remote_purge'/.test(hubToolsSrc)
+    && /UI_API_PREFIX\}\/purge/.test(uiRoutesSrc)
     && /apiPost\('\/purge'/.test(clientSrc),
     'remote_purge 工具 / /purge 路由 / 面板「清理」按钮 —— 三者缺一，死局就没有出口')
 
@@ -466,16 +466,16 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
  *   - dispatch 表单的模型输入真的进请求体
  */
 {
-  const client = read('lib/client.js')
+  const panelClient = read('lib/client.js')
   const rootReadme = read('README.md')
   check('45', '/pair-info 路由存在，token 披露仅限回环（策略不被放宽）',
     /pair-info/.test(uiRoutes) && /loopback/.test(uiRoutes) && /remoteAddress/.test(uiRoutes),
     'lib/hub/ui-routes.js pair-info（loopback 判定 + remoteAddress 读取）')
   check('46', '面板有副机接入入口与 pair 复制按钮（GUI 落点真实存在）',
-    /副机接入/.test(client) && /复制 pair 配置行/.test(client) && /loadPair/.test(client),
+    /副机接入/.test(panelClient) && /复制 pair 配置行/.test(panelClient) && /loadPair/.test(panelClient),
     'lib/client.js 副机接入卡片')
   check('47', 'dispatch 表单的模型输入进请求体，README 说明面板两条入口',
-    /model:\s*fv\.model/.test(client) && /副机接入/.test(rootReadme) && /模型/.test(rootReadme),
+    /model:\s*fv\.model/.test(panelClient) && /副机接入/.test(rootReadme) && /模型/.test(rootReadme),
     'lib/client.js dispatch + README.md')
 }
 
@@ -639,6 +639,28 @@ check('49', '真实运行时自检脚本存在，KNOWN-ISSUES 第 8 节记录验
     && /hub-identity-pending/.test(p2Changelog) && /hubFingerprint/.test(p2Changelog),
     'CHANGELOG.md [未发布] 段')
 }
+
+/* ── 65. eslint 严格档三件套 ──
+ *
+ * lint 是 CI 的第三条防线（no-undef 首跑就抓到过 numOr 真 bug）。
+ * 锚点钉 run: npm run lint 整行 —— ci.yml 顶部注释也含 npm run lint 字样，
+ * 只查裸字样会在 job 被删时被注释救活（自检变异抓过）。
+ * 钉住三件事：lint script 存在、配置文件存在、CI 真的跑它 ——
+ * 防"配置还在、CI 早就不跑"的静默失效。
+ */
+check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐全',
+  pkg.scripts?.lint === 'eslint .'
+  && fs.existsSync(path.join(ROOT, 'eslint.config.js'))
+  // ⚠ 原写法是 `/run://s*npm run lint/` —— 反斜杠丢了，`\s` 变成 `//s`。
+  // 于是正则字面量在 `run:` 处就结束了，剩下的 `//s*npm run lint/...` 被当成
+  // 注释，整行变成 `... && /run:/ / s * npm ...` —— **语法错误**，脚本直接抛
+  // SyntaxError 崩掉（而不是"断言失败"）。
+  //
+  // 后果比断言失败严重：脚本崩溃让**整份漂移检查 exit 1 但没有任何 [NN] 输出**，
+  // 于是 doc-drift-selfcheck 的"注入后必须报出 [65]"用例永远失败，
+  // 而其他用例因为"exit 1"而假绿。
+  && /run:\s*npm run lint/.test(read('.github/workflows/ci.yml')),
+  'package.json scripts.lint + eslint.config.js + .github/workflows/ci.yml')
 
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)

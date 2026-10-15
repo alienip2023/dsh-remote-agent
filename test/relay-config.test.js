@@ -312,7 +312,7 @@ test('原子写：先写临时文件、再 rename 覆盖，目标文件在 renam
   let targetExistedDuringWrite = null
 
   const { calls } = spyFs(t, ['writeFileSync', 'renameSync'], {
-    on: (name, args) => {
+    on: (name) => {
       if (name === 'writeFileSync') targetExistedDuringWrite = fs.existsSync(target)
     },
   })
@@ -382,7 +382,7 @@ test('原子写：目标已存在时重写仍是"临时文件 → rename"，不�
   // 并观察写临时文件期间目标的**存在性**。
   let targetExistedDuringWrite = null
   const { calls } = spyFs(t, ['writeFileSync', 'renameSync'], {
-    on: (name, args) => {
+    on: (name) => {
       if (name === 'writeFileSync') targetExistedDuringWrite = fs.existsSync(target)
     },
   })

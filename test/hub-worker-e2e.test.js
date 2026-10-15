@@ -38,7 +38,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { applyHub } from '../lib/hub/index.js'
 import { applyWorker } from '../lib/node/index.js'
-import { PROTOCOL_VERSION, TASK_STATUS, newTaskId } from '../lib/protocol.js'
+import { PROTOCOL_VERSION, TASK_STATUS } from '../lib/protocol.js'
 import { createRelay, newRelayToken } from '../lib/relay.js'
 
 const IS_WIN = process.platform === 'win32'

@@ -296,7 +296,7 @@ test('destroy(err) 触发 error 与 close，且不抛', async (t) => {
   const srv = await startServer(t)
   t.after(() => srv.close())
 
-  const client = await connectClient(srv.url, t)
+  await connectClient(srv.url, t)
   const server = srv.conns[0]
 
   const errP = once(server, 'error')

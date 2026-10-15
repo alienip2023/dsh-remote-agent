@@ -7,13 +7,11 @@
  * 单元测试用假 ctx 测不到，所以这里专门构造一个"属性访问会抛错"的 ctx 来复现。
  */
 import assert from 'node:assert/strict'
-import http from 'node:http'
 import { test } from 'node:test'
-import { createHash } from 'node:crypto'
 import { createRelay } from '../lib/relay.js'
 import { connect, acceptUpgrade } from '../lib/ws.js'
 import { NodeRegistry } from '../lib/hub/node-registry.js'
-import { decodeFrame, encodeFrame, envelope, RELAY_FRAME, PROTOCOL_VERSION } from '../lib/protocol.js'
+import { encodeFrame, envelope, RELAY_FRAME, PROTOCOL_VERSION } from '../lib/protocol.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 

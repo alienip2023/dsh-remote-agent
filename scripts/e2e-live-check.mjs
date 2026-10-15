@@ -119,7 +119,7 @@ while (Date.now() - started < watchMs) {
   for (const f of files) {
     if (!f.endsWith('.json') || seen.has(f)) continue
     seen.add(f)
-    let rec = null
+    let rec
     try { rec = JSON.parse(fs.readFileSync(path.join(tasksDir, f), 'utf8')) } catch { continue }
     say(`· 收到任务记录：${rec.taskId} status=${rec.status}`)
     hit = rec

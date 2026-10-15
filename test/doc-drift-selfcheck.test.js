@@ -52,6 +52,10 @@ function makeCopy(t) {
     // 派发自动化评估断言（57~58）读 docs/dispatch-automation-eval.md ——
     // 与 deploy 同类的脆弱点，加 read() 目标必须同步这里。
     'docs',
+    // eslint 断言（65）读 CI 工作流内容 + 检查 eslint.config.js 存在 ——
+    // 两个都要进副本（漏 config 会让 existsSync 在副本里恒 false，整批假失败）。
+    '.github/workflows/ci.yml',
+    'eslint.config.js',
     // 向导断言（36~39）会读 lib/setup.js 并检查 bin/dsh-remote-setup.js 存在 ——
     // 漏了这里，全部用例会因 ENOENT 失败而不是断言失效（该脆弱点已踩过两次）。
     'lib/setup.js',
@@ -344,4 +348,26 @@ test('自检：transport.js 删掉身份宽限窗口必须被检出', (t) => {
   )
   assert.equal(code, 1, `删宽限窗口方法应被检出（exit 1），实际 exit ${code}`)
   assert.match(out, /\[63\]/, '应报出 63')
+})
+
+// ── eslint 断言（65）的自检 ──
+// 三件套任何一件失守都该被抓：script 改动 / CI 不再跑 lint。
+test('自检：lint script 被改动必须被检出', (t) => {
+  const { code, out } = probe(
+    t,
+    (src) => src.replace('"lint": "eslint ."', '"lint": "eslint . --quiet"'),
+    'package.json',
+  )
+  assert.equal(code, 1, `改 lint script 应被检出（exit 1），实际 exit ${code}`)
+  assert.match(out, /\[65\]/, '应报出 65')
+})
+
+test('自检：CI 删掉 lint job 必须被检出', (t) => {
+  const { code, out } = probe(
+    t,
+    (src) => src.replace(/\s*run: npm run lint/, ''),
+    '.github/workflows/ci.yml',
+  )
+  assert.equal(code, 1, `CI 删 lint 步骤应被检出（exit 1），实际 exit ${code}`)
+  assert.match(out, /\[65\]/, '应报出 65')
 })

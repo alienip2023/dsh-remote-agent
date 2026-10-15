@@ -241,6 +241,49 @@ test('SetupView 的结果页提示"重启生效"', () => {
   assert.match(seg, /重启 DSH/, '结果页必须提示重启 —— 配置改动不会热生效')
 })
 
+test('提示（note/conflict）必须渲染在按钮**上方**', () => {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 实测踩过：提示原先放在按钮下方，用户点完按钮后视线停在按钮处，
+  // 而面板滚动位置没变 —— 提示在折叠线以下看不见，用户以为"点了没反应"。
+  // 第一次验收就是这样：截图只到按钮为止，看不到任何反馈。
+  // ═══════════════════════════════════════════════════════════════════════════
+  const code = stripComments(client)
+  const i = code.indexOf('function SetupView(')
+  const seg = code.slice(i, i + 15000)
+
+  // worker 表单：「确认，写入配置」按钮
+  const btnIdx = seg.indexOf("submit('worker')")
+  assert.ok(btnIdx >= 0, '应找到 worker 提交按钮')
+  const noteIdx = seg.indexOf("className: 'dra-err'", Math.max(0, btnIdx - 2500))
+  const conflictIdx = seg.indexOf("className: 'dra-warn'", Math.max(0, btnIdx - 2500))
+  assert.ok(noteIdx >= 0, 'worker 表单应有 note 渲染')
+  assert.ok(conflictIdx >= 0, 'worker 表单应有 conflict 渲染')
+  assert.ok(noteIdx < btnIdx, 'note 必须在提交按钮**上方**（否则用户看不到反馈）')
+  assert.ok(conflictIdx < btnIdx, 'conflict 必须在提交按钮**上方**')
+
+  // hub 表单同理
+  const hubBtn = seg.indexOf("submit('hub')")
+  assert.ok(hubBtn >= 0, '应找到 hub 提交按钮')
+  const hubNote = seg.indexOf("className: 'dra-err'", Math.max(0, hubBtn - 2500))
+  assert.ok(hubNote >= 0 && hubNote < hubBtn, 'hub 表单的 note 也必须在按钮上方')
+
+  // 选择页：note 应在卡片之前
+  const cardIdx = seg.indexOf('dra-choices')
+  const chooseNote = seg.indexOf("className: 'dra-err'", Math.max(0, cardIdx - 1500))
+  assert.ok(chooseNote >= 0 && chooseNote < cardIdx, '选择页的 note 应在卡片之前')
+})
+
+test('冲突提示在三处表单都提供（选择页 / 主机页 / 副机页）', () => {
+  // 用户可能在任一步骤点提交，三处都必须能显示冲突 + 提供"替换"按钮。
+  const code = stripComments(client)
+  const i = code.indexOf('function SetupView(')
+  const seg = code.slice(i, i + 15000)
+  const warns = (seg.match(/className: 'dra-warn'/g) || []).length
+  assert.ok(warns >= 3, `冲突提示应出现在三处表单（实际 ${warns} 处）`)
+  const forces = (seg.match(/force: true/g) || []).length
+  assert.ok(forces >= 3, `"替换手写配置"按钮应出现在三处（实际 ${forces} 处）`)
+})
+
 /* ─────────────── 5. 切换角色（已配置后改） ─────────────── */
 
 test('setup state 如实报告 configured（面板据此区分引导/切换）', () => {
@@ -280,7 +323,7 @@ test('SetupView 的 switching 模式回填当前值并显示当前角色', () =>
   const code = stripComments(client)
   const i = code.indexOf('function SetupView(')
   const seg = code.slice(i, i + 1400)
-  assert.match(seg, /var switching = props\.switching === true/, '应识别 switching')
+  assert.match(seg, /(?:var|let|const) switching = props\.switching === true/, '应识别 switching')
   assert.match(seg, /cur\.hubUrl \|\| ''/, '应回填当前 hubUrl')
   assert.match(seg, /cur\.roots/, '应回填当前 roots')
 })
@@ -297,8 +340,8 @@ test('切换会同时改写 inject（用户不用手动改两处）', () => {
   const seg = code.slice(i, i + 1200)
   // worker 与 hub 各写一份 inject
   assert.match(seg, /if \(role === 'worker'\)/, '应区分 worker')
-  assert.match(seg, /lines\.push\("  inject: \['tools', 'agentLoop', 'sessions'\]"\)/, 'worker 的 inject 应被写入')
-  assert.match(seg, /lines\.push\("  inject: \['webServer', 'tools', 'systemPrompt'\]"\)/, 'hub 的 inject 应被写入')
+  assert.match(seg, /lines\.push\(" {2}inject: \['tools', 'agentLoop', 'sessions'\]"\)/, 'worker 的 inject 应被写入')
+  assert.match(seg, /lines\.push\(" {2}inject: \['webServer', 'tools', 'systemPrompt'\]"\)/, 'hub 的 inject 应被写入')
   // 且 inject 必须在 config 之前（YAML 里它们是同级字段，顺序不影响解析，
   // 但这里锚定"两份 inject 都在"，防止未来被简化成只写一份）
 })

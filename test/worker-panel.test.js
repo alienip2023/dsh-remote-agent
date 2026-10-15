@@ -61,7 +61,7 @@ test('statusSnapshot 覆盖面板要显示的每一项', () => {
 /* ─────────────── 2. client 半必须支持双角色 ─────────────── */
 
 test('client 定义了副机状态端点的常量', () => {
-  assert.match(client, /var STATUS_PATH = ['"]\/api\/remote-agent\/status['"]/, '应定义 STATUS_PATH')
+  assert.match(client, /(?:var|let|const) STATUS_PATH = ['"]\/api\/remote-agent\/status['"]/, '应定义 STATUS_PATH')
 })
 
 test('client 有 apiGetPath（拉绝对路径，不走 UI 前缀）', () => {
@@ -115,11 +115,12 @@ test('两个端点都失败时**如实报错**（不静默）', () => {
  * （决定拉哪个端点），一次在渲染里（决定画哪个视图）。用 `indexOf` 会
  * 命中第一个 —— 那是轮询，不含任何 UI 文案（第一版断言就是这样误报的）。
  *
- * 渲染分支的特征：里面有 `var workerCards`。所以以它为锚点回溯到
- * 最近的 `if (state.mode === 'worker')`。
+ * 渲染分支的特征：里面有 `workerCards` 的声明。所以以它为锚点回溯到
+ * 最近的 `if (state.mode === 'worker')`。（声明关键字 var/let/const 都接受
+ * —— eslint no-var 上线后源码已统一切到 const。）
  */
 function workerRenderBranch(code) {
-  const cards = code.indexOf('var workerCards')
+  const cards = code.search(/(?:var|let|const) workerCards/)
   if (cards < 0) return ''
   const i = code.lastIndexOf("if (state.mode === 'worker')", cards)
   if (i < 0) return ''
@@ -151,18 +152,18 @@ test('worker 视图用独立变量名，不与 hub 视图冲突', () => {
   const code = stripComments(client)
   const seg = workerRenderBranch(code)
   assert.ok(seg.length > 500, 'worker 渲染分支应存在')
-  assert.match(seg, /var workerCards/, 'worker 视图应用自己的 workerCards')
-  assert.match(seg, /var workerInfo/, 'worker 视图应用自己的 workerInfo')
+  assert.match(seg, /(?:var|let|const) workerCards/, 'worker 视图应用自己的 workerCards')
+  assert.match(seg, /(?:var|let|const) workerInfo/, 'worker 视图应用自己的 workerInfo')
   // 不得重新声明 hub 的变量（那会 shadow 或报错）
-  assert.ok(!/var cards = /.test(seg), 'worker 分支不得重新声明 cards（hub 已有）')
-  assert.ok(!/var head = /.test(seg), 'worker 分支不得重新声明 head（hub 已有）')
+  assert.ok(!/(?:var|let|const) cards = /.test(seg), 'worker 分支不得重新声明 cards（hub 已有）')
+  assert.ok(!/(?:var|let|const) head = /.test(seg), 'worker 分支不得重新声明 head（hub 已有）')
 })
 
 /* ─────────────── 4. 刷新按钮在两种视图下都可用 ─────────────── */
 
 test('轮询依赖里带 tick（刷新按钮靠它触发重拉）', () => {
   const code = stripComments(client)
-  const i = code.indexOf('var timer = setInterval(load, 4000)')
+  const i = code.search(/(?:var|let|const) timer = setInterval\(load, 4000\)/)
   assert.ok(i >= 0, '应存在轮询 timer')
   const seg = code.slice(i, i + 400)
   assert.match(seg, /\}, \[setState, state\.mode, tick\]\)/, '依赖数组应含 tick（否则刷新按钮无效）')

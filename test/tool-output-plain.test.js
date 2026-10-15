@@ -51,7 +51,7 @@ function loadToPlainJson() {
   }
   assert.ok(end > 0, 'toPlainJson 花括号配对失败')
   const fnSrc = src.slice(start, end)
-  // eslint-disable-next-line no-new-func
+   
   return new Function(`${fnSrc}\nreturn toPlainJson`)()
 }
 
@@ -143,7 +143,7 @@ test('收口：toPlainJson 必须覆盖全部 8 个工具（经 reg 注册）', 
   const names = [...src.matchAll(/name: '(remote_[a-z_]+)'/g)].map((m) => m[1])
   assert.equal(names.length, 8, `应有 8 个工具，实际 ${names.length}: ${names.join(', ')}`)
   // 每个都走 reg({...})，所以自动被包净化
-  const regCalls = (src.match(/\n  reg\(\{/g) || []).length
+  const regCalls = (src.match(/\n {2}reg\(\{/g) || []).length
   assert.equal(regCalls, 8, `应有 8 处 reg({...}) 调用，实际 ${regCalls}`)
   // 锁住工具集合本身：新增/删除工具时这条会提醒你同步文档与断言
   assert.deepEqual(
@@ -167,7 +167,7 @@ function loadDropNull() {
       if (depth === 0) { end = i + 1; break }
     }
   }
-  // eslint-disable-next-line no-new-func
+   
   return new Function(`${src.slice(start, end)}\nreturn dropNullForSchema`)()
 }
 

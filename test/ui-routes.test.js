@@ -929,9 +929,9 @@ test('UI pull：paths 非数组 / 元素非字符串被过滤', async (t) => {
  * ══════════════════════════════════════════════════════════════════ */
 
 test('UI 路由：uiEnabled=false 时不注册任何 UI 路由', async (t) => {
-  const root = tmpRoot(t)
+  tmpRoot(t)
   const relay = await startRelay(t)
-  const { server, port } = await startHttpServer()
+  const { server } = await startHttpServer()
   const hubCtx = makeCtx({ server })
   hubCtx.ctx.webServer.register = (route) => {
     server.__exact.set(route.path, route.handler)

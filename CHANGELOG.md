@@ -11,6 +11,23 @@
 
 ## [未发布]
 
+### 修复：task/sync 自动清理分支 ReferenceError（eslint no-undef 首功）
+
+`applySync` 的自动清理分支用了 `lib/hub/index.js` 的私有 `numOr`，而
+`node-registry.js` 是 hub 目录的依赖叶子（index → registry 单向依赖），
+本文件并未定义它 —— 分支一走到就 `ReferenceError`，task/sync 全量重建
+视图随之中断。此前测试只做文本断言，从没真正执行过这条路径；修复后补
+行为级回归（retainMs=1ms 触发清理 + 刚结束任务保留的保留期对照）。
+
+### 工程：eslint 严格档进 CI
+
+新增 `eslint.config.js`（flat config）与 `npm run lint`；devDependencies
+引入 eslint 10 —— **运行时仍零依赖**（devDeps 不进 git 安装，`npm run check`
+保持「不装依赖也能跑」，CI 里 lint 是独立 job）。规则集 = 推荐集 + 一批
+高信号一致性规则（eqeqeq / no-var / prefer-const / no-shadow /
+require-atomic-updates 等），首跑清零 256 处存量违规。测试侧放宽两处
+框架惯例：node:test 上下文参数 `t`、docblock 零宽空格转义。
+
 ### 性能：task-store 热路径异步化（状态同步 + 日志/进度批量写回）
 
 `appendLog` / `appendProgress` 此前每行都全量重写整个任务记录文件

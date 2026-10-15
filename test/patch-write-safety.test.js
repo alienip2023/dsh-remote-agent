@@ -38,10 +38,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { fileURLToPath } from 'node:url'
-
-const HERE = path.dirname(fileURLToPath(import.meta.url))
-const ROOT = path.resolve(HERE, '..')
 const { writePatchBlock, hasUnmanagedRemoteAgent, upsertManagedBlock } = await import(
   new URL('../lib/setup.js', import.meta.url).href
 )

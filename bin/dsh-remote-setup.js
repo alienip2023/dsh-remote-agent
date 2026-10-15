@@ -26,7 +26,6 @@ import {
   probeTcp,
   doctorChecks,
   renderDoctor,
-  friendlyConnectError,
   patchFilePath,
   listDshProfiles,
   writePatchBlock,

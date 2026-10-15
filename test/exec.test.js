@@ -84,12 +84,6 @@ function scopedEnv(vars, fn) {
   }
 }
 
-/** 让一组环境改动持续整个测试（测试结束还原）。 */
-function testEnv(t, vars) {
-  const restore = applyEnv(vars)
-  t.after(restore)
-}
-
 /**
  * 每个测试只保存一次的"真实环境"快照。
  *

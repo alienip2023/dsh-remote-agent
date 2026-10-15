@@ -24,7 +24,6 @@ import test from 'node:test'
 
 import { WSConnection, acceptKey } from '../lib/ws.js'
 import {
-  MAX_ARTIFACT_FRAME_BYTES,
   PROTOCOL_VERSION,
   decodeBinaryFrame,
   encodeBinaryFrame,

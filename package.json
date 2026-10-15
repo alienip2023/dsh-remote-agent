@@ -75,7 +75,7 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.4"
+    "@deepseek-ai/schemastery": "*"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
@@ -84,6 +84,12 @@
     "test": "node --test test/*.test.js",
     "check:docs": "node scripts/check-doc-drift.mjs",
     "check:packaging": "node scripts/check-packaging.mjs",
+    "lint": "eslint .",
     "check": "npm run check:packaging && npm run check:docs && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.12.0",
+    "globals": "17.13.0"
   }
 }
