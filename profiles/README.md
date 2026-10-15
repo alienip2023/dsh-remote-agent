@@ -143,6 +143,23 @@ journalctl -u dsh-remote-relay -f      # 看 RELAY_READY 与事件 JSON 行
 **云厂商安全组 / 防火墙**：放行 `tcp/8890`。若只给这两台机器用，把来源限到它们的出口 IP，
 别对 `0.0.0.0/0` 开。
 
+### 公网暴露必须套 TLS（`wss://`）
+
+上面是 MVP 的最小形态（裸 IP + 明文 `ws://`）。**正式用之前**：中继暴露在公网时，
+token 与业务帧都在明文裸奔 —— 按 [SECURITY.md](../../SECURITY.md) 的要求，
+中继应部署在 TLS 之后，两端换 `wss://`。可直接抄的模板在
+**[deploy/relay-vps/](../../deploy/relay-vps/)**：
+
+| 模板 | 用法 |
+|---|---|
+| `Caddyfile` | 自动申请/续期证书，最省事；WebSocket 升级自动透传 |
+| `nginx.conf` | 已有证书/自有 nginx 时用（含 WS 三件套与长连接超时） |
+| `dsh-remote-relay.service` + `relay.env.example` | 手动装机时的 unit 与凭证模板（一键脚本是 `scripts/relay-init.sh`） |
+
+套上之后：中继本体只听 `127.0.0.1`（公网只看到 443），两端地址换成
+`wss://<域名>/relay`（端口省略），**token 不变**。验证命令同样走 https：
+`curl -fsS https://<域名>/healthz`。
+
 ### 主电脑（hub）config 怎么填
 
 ```yaml
@@ -494,9 +511,14 @@ curl -sS -X POST http://127.0.0.1:8890/api/remote-agent/ui/pull \
 | 凭证位置 | 中继机器（`/etc/dsh-remote-relay/env`） | hub 机器 | hub 机器 |
 | 最适合 | 两台都在 NAT 后，v0.1 MVP 验证 | 有自己的服务器/公网 | 无公网但能用 Cloudflare |
 | 主要风险 | VPS 被扫端口 | 控制面直接暴露公网 | 依赖第三方隧道 |
+| 降级链位置 | 直连不可用时的主力（自有基础设施） | 链首：能直连就它，零组件 | 与中继同级：不想养 VPS 时的替代 |
 
 **v0.1 建议**：先用路径一跑通 MVP（最少变量、可复现），再按需要切路径二或三。
 切换时只改 `transportMode` 与地址/token 三项，副机 `roots`/`stateDir` 不用动。
+
+**降级链回顾**（详见开头的「怎么选路径」一节）：direct（能直连就它）→
+中继 VPS / cloudflared（直连不可用时的两个同级选项）→ 链路全断时副机本地续跑、
+重连后 task/sync 对账（最深的降级，设计使然）。
 
 ---
 
@@ -516,6 +538,8 @@ curl -sS -X POST http://127.0.0.1:8890/api/remote-agent/ui/pull \
 | 面板「读取失败」 | `uiEnabled: false`、插件没加载、或 `/api/remote-agent/ui/overview` 返回非 200 |
 | 侧栏图标点了没反应 | `sidebar.panellist` 的 id 与 `main` 的 key 不一致（须同为 `dsh-remote-agent`） |
 | 副机 dsh 启动卡住 | 不应该发生：worker 侧不得有顶层网络 await。若出现请当 bug 报（记录日志与复现步骤） |
+| 中继自己挂了（healthz 打不开） | 任务不受影响：副机本地跑完，重连后 task/sync 补齐。修中继或按降级链临时切路径 |
+| 公网裸 `ws://` 心里没底 | 套 TLS：`deploy/relay-vps/` 的 Caddyfile / nginx.conf，两端换 `wss://`，token 不变 |
 
 **日志里只看指纹**：`RELAY_READY url=ws://... hub=<12位指纹> enroll=<12位指纹>`。
 要核对两端 token 是不是同一套，**比指纹**，不要把明文贴进任何工单或聊天记录。

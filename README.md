@@ -153,7 +153,10 @@ dsh plugin add github:zbzbhs/dsh-remote-agent
 > 就覆盖掉了包内的声明。
 
 **接入路径**（双方都在 NAT 后 / 一方有公网 / 隧道）见
-**[profiles/README.md](profiles/README.md)** —— 那里有每条路径的配置片段与验证命令。
+**[profiles/README.md](profiles/README.md)** —— 那里有每条路径的配置片段与验证命令，
+以及一条**降级链**：能直连走 direct，不通就降级到中继 VPS 或 cloudflared 隧道；
+链路全断时副机本地续跑、重连自动对账。中继的 VPS 部署模板（含 TLS 前置）
+在 [deploy/relay-vps/](deploy/relay-vps/)。
 
 ---
 

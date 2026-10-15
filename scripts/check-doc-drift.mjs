@@ -512,6 +512,63 @@ check('49', '真实运行时自检脚本存在，KNOWN-ISSUES 第 8 节记录验
   && /e2e-live-check/.test(known) && /##\s*8\./.test(known),
   'scripts/e2e-live-check.mjs + KNOWN-ISSUES.md 第 8 节')
 
+/* ── 50~56. relay 跨 NAT 降级链与 VPS 部署模板（2026-10-15 P1-6） ──
+ *
+ * 对标竞品四级降级链的"最小可感知版本"：三条接入路径被组织成一条
+ * 条件式降级链（direct → 中继 VPS / cloudflared → 本地续跑），
+ * 并给出可直接抄的 VPS 部署模板（deploy/relay-vps/）。
+ *
+ * 为什么钉这条：降级链是**文档形态的承诺**，删了不会有任何测试变红，
+ * 但"链路断了怎么办"恰恰是新用户最易感知的功能性差距。模板文件同理 ——
+ * 少了 unit/env/TLS 任何一个，公网中继就只剩"明文 ws:// 裸奔"一条路。
+ */
+{
+  const profilesReadme = read('profiles/README.md')
+  const rootReadme = read('README.md')
+  const security = read('SECURITY.md')
+  const unit = read('deploy/relay-vps/dsh-remote-relay.service')
+  const envTpl = read('deploy/relay-vps/relay.env.example')
+  const caddy = read('deploy/relay-vps/Caddyfile')
+  const nginx = read('deploy/relay-vps/nginx.conf')
+
+  check('50', 'deploy/relay-vps/ 模板五件套齐全',
+    fs.existsSync(path.join(ROOT, 'deploy/relay-vps/README.md'))
+    && unit.length > 0 && envTpl.length > 0 && caddy.length > 0 && nginx.length > 0,
+    'deploy/relay-vps/{README.md,dsh-remote-relay.service,relay.env.example,Caddyfile,nginx.conf}')
+
+  check('51', 'profiles/README.md 有降级链一节（含降级判据表）',
+    /降级链/.test(profilesReadme) && /该降级了的判据/.test(profilesReadme)
+    && /最深的降级/.test(profilesReadme),
+    'profiles/README.md「怎么选路径：降级链」')
+
+  check('52', 'profiles/README.md 路径一要求公网套 TLS 并指向 deploy 模板',
+    /wss:\/\//.test(profilesReadme) && /deploy\/relay-vps\//.test(profilesReadme)
+    && /必须套 TLS|部署在 TLS 之后/.test(profilesReadme),
+    'profiles/README.md 路径一 TLS 小节')
+
+  check('53', 'unit 模板保留加固段，env 模板声明 0600 与占位符',
+    /NoNewPrivileges=true/.test(unit) && /ProtectSystem=strict/.test(unit)
+    && /ReadWritePaths=/.test(unit)
+    && /0600/.test(envTpl) && /REPLACE_WITH_GENERATED/.test(envTpl),
+    'deploy/relay-vps/dsh-remote-relay.service + relay.env.example')
+
+  check('54', 'nginx 模板含 WebSocket 三件套（缺一不可）',
+    /proxy_http_version 1\.1;/.test(nginx)
+    && /proxy_set_header Upgrade \$http_upgrade;/.test(nginx)
+    && /proxy_set_header Connection "upgrade";/.test(nginx),
+    'deploy/relay-vps/nginx.conf')
+
+  check('55', 'SECURITY.md 传输加密表指向 deploy 模板，威胁模型声明中继可见明文帧',
+    /deploy\/relay-vps\//.test(security) && /端到端加密/.test(security)
+    && /中继挂了任务照跑|task\/sync/.test(security),
+    'SECURITY.md 传输加密表 + 威胁模型')
+
+  check('56', 'README 接入路径段提降级链，package.json files 带上 deploy',
+    /降级链/.test(rootReadme) && /deploy\/relay-vps\//.test(rootReadme)
+    && pkg.files?.includes('deploy'),
+    'README.md 接入路径段 + package.json files')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

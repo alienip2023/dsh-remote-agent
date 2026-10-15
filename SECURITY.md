@@ -33,6 +33,9 @@
   按需 pull 成品
 ```
 
+**relay 形态**（双方都在 NAT 后，见 [profiles/README.md](profiles/README.md) 的降级链）：
+hub 与 node 都主动拨入中继，中继按 nodeId 双向转发。
+
 **信任假设**：
 
 | 假设 | 说明 |
@@ -40,6 +43,10 @@
 | 主机是可信的 | 主机能派任意任务给副机。**不要把副机接到你不信任的主机。** |
 | 副机是可信的 | 副机上报的 handoff 会进主机的模型上下文。**不要把主机接到你不信任的副机。** |
 | 传输通道可能被窃听 | `direct` 模式的默认配置是**明文 ws://**。见下面「传输加密」。 |
+| 中继机器是可信的（用 relay 时） | 协议**无端到端加密**（只有传输层 token）：中继看得到明文业务帧。选 VPS 提供商等同于把链路交给他 —— 这正是「公网中继必须套 TLS、来源限 IP」的原因。 |
+
+**可用性边界**（不是安全边界）：中继挂了任务照跑 —— 副机本地持久执行，
+重连后 `task/sync` 对账。链路断不影响已派任务的完成，只影响"此刻能否派新的"。
 
 **本插件不做的事**（有意为之）：
 
@@ -85,7 +92,7 @@
 | Tailscale / WireGuard 虚拟内网 | 明文 `ws://` 可接受（隧道已加密）|
 | 同机 / 完全可信 LAN | 明文 `ws://` 可接受 |
 | **公网直连** | **必须**在前面放 TLS 反向代理（nginx/caddy），用 `wss://` |
-| 公网中继 | 中继应部署在 TLS 之后，用 `wss://` |
+| 公网中继 | 中继应部署在 TLS 之后，用 `wss://`。可直接抄的模板：[deploy/relay-vps/](deploy/relay-vps/)（Caddyfile / nginx.conf，中继只听回环、公网只暴露 443）|
 
 **本插件不自带 TLS。** 它假设"要么网络层已加密，要么你在可信网络里"。
 
@@ -175,9 +182,14 @@ DSH 的 `/api` 鉴权围栏是 `kind: 'prefix'`，而本插件的路由是 `kind
 
 ### 中继的 token 处理
 
-中继的一次性 token 写在 `.relay-tokens/`（已在 `.gitignore` 里）。
-**不要提交 token 文件。** 副机的 `token` 也可以留空，让它读
-`<stateDir>/token` 文件 —— 便于不把凭证写进 YAML。
+- **一次性 token 不落盘**：由中继管理接口（`POST /api/relay/token`）铸造，
+  只存在中继进程内存里，用过（consumed）或过期（默认 15 分钟）即消失。
+  重放会 403 —— 适合"发一台机器出去"的场景。
+- **长期凭证在中继机器上**：`/etc/dsh-remote-relay/env`（0600，root:root）与
+  `<data-dir>/tokens.json`（0600）。**都不要提交进版本库。**部署模板见
+  [deploy/relay-vps/](deploy/relay-vps/)。
+- 副机的 `token` 也可以留空，让它读 `<stateDir>/token` 文件 ——
+  便于不把凭证写进 YAML。
 
 ---
 

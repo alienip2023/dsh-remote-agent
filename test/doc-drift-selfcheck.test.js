@@ -32,12 +32,13 @@ function makeCopy(t) {
   // lib/client.js、lib/hub/*、lib/hub/index.js、lib/node/*、lib/index.js、
   // lib/protocol.js、lib/glob.js、lib/relay.js、profiles/README.md、
   // KNOWN-ISSUES.md、package.json、README.md、cordis.patch.yml，
+  // deploy/relay-vps/*（降级链断言 50~54 读它），
   // 以及断言 28 检查存在性的那些维护设施（CHANGELOG/CONTRIBUTING/SECURITY/
   // .editorconfig/.github/*）。
   //
   // ⚠ 这个清单是**脆弱点**：check-doc-drift 每新增一个 read() 目标，
   // 这里就要跟着加，否则所有用例都会因 ENOENT 失败（而不是因为断言失效）。
-  // 已经踩过两次（漏 lib/client.js、漏 README.md）。
+  // 已经踩过三次（漏 lib/client.js、漏 README.md、漏 deploy/）。
   // 加目标时的稳妥做法：本地跑 `npm test`，若整批失败且错误是 ENOENT，就是这里漏了。
   const entries = [
     'lib/client.js',
@@ -45,6 +46,9 @@ function makeCopy(t) {
     'lib/protocol.js',
     'lib/glob.js',
     'lib/relay.js',
+    // 降级链断言（50~54）读 deploy/relay-vps/ 的四个模板文件 ——
+    // 漏了整个目录，自检会整批 ENOENT（该脆弱点第三次踩到）。
+    'deploy',
     // 向导断言（36~39）会读 lib/setup.js 并检查 bin/dsh-remote-setup.js 存在 ——
     // 漏了这里，全部用例会因 ENOENT 失败而不是断言失效（该脆弱点已踩过两次）。
     'lib/setup.js',
@@ -266,4 +270,37 @@ test('自检：注释里的反例不得被当成真代码（防剥注释回归�
   fs.writeFileSync(target, `// 反例说明：不能写成 { handoff: t.handoff } 直接回\n${src}`, 'utf8')
   const { code } = runCheck(dir)
   assert.equal(code, 0, '注释里的反例不应触发漂移（否则是假阳性，会让人无视脚本）')
+})
+
+// ── 降级链断言（50~56）的自检 ──
+// 这条链是文档形态的承诺：断言写松了不会有任何运行时症状，
+// 所以每个新断言都配一个"改坏必须被抓"的用例，与 12/14c/14d 同规格。
+test('自检：nginx 模板删掉 Upgrade 头必须被检出（防"三件套查一个"回归）', (t) => {
+  const { code, out } = probe(
+    t,
+    (src) => src.replace(/\s*proxy_set_header Upgrade \$http_upgrade;/, ''),
+    'deploy/relay-vps/nginx.conf',
+  )
+  assert.equal(code, 1, `删 Upgrade 头应被检出（exit 1），实际 exit ${code}`)
+  assert.match(out, /\[54\]/, '应报出 54')
+})
+
+test('自检：profiles/README.md 删掉降级链一节必须被检出', (t) => {
+  const { code, out } = probe(
+    t,
+    (src) => src.replace(/## 怎么选路径：降级链[\s\S]*?(?=\n---\n\n## 0\.)/, ''),
+    'profiles/README.md',
+  )
+  assert.equal(code, 1, `删降级链一节应被检出（exit 1），实际 exit ${code}`)
+  assert.match(out, /\[51\]/, '应报出 51')
+})
+
+test('自检：unit 模板删掉加固段必须被检出', (t) => {
+  const { code, out } = probe(
+    t,
+    (src) => src.replace('ProtectSystem=strict', 'ProtectSystem=off'),
+    'deploy/relay-vps/dsh-remote-relay.service',
+  )
+  assert.equal(code, 1, `削弱加固段应被检出（exit 1），实际 exit ${code}`)
+  assert.match(out, /\[53\]/, '应报出 53')
 })
