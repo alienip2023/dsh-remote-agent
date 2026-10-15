@@ -447,7 +447,10 @@ test('边界：空对象喂进来 → 全默认值，不抛', () => {
   assert.equal(t.status, 'unknown')
   assert.equal(t.changedCount, 0)
   assert.deepEqual(t.changed, [])
-  assert.equal(t.manifestCounts, null)
+  // manifestCounts 的 schema 声明是 object，**不能是 null** —— DSH 的工具返回值
+  // schema 校验会报 `"value.manifestCounts" must be an object`，整个工具调用失败
+  // （而任务其实已派出，属"有副作用却报失败"）。所以改成空对象兜底。
+  assert.deepEqual(t.manifestCounts, {})
   assert.deepEqual(t.progressTail, [])
   assert.deepEqual(t.logTail, [])
 
