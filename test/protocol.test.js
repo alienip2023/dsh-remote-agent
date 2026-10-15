@@ -134,6 +134,8 @@ const VALID_HELLO = {
   caps: ['fs', 'exec', 'artifact', 'agent'],
   profile: 'worker',
   agentMode: true,
+  // P2-11：连接级挑战随机数。缺失时归一化成 ''（旧版副机兼容路径）。
+  nonce: 'a1b2c3d4e5f60718293a4b5c6d7e8f90',
   time: 1700000000000,
 }
 
