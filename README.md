@@ -122,6 +122,7 @@ dsh plugin add github:zbzbhs/dsh-remote-agent
 | `node` | 目标节点 id。省略时要求恰好只有一个在线节点 |
 | `workspace` | 副机上的绝对路径，必须在节点 `roots` 内。省略用默认 |
 | `mode` | `agent`（副机起独立 agent 会话，默认）/ `exec`（直接跑命令）|
+| `model` | 可选。副机用的模型（仅 `mode=agent` 生效）：`{model:"deepseek-chat"}` 或 `{provider:"openai",model:"gpt-4o"}`。只传选择不传凭证 —— 副机用自己的 provider 配置跑；headless 后端不支持 |
 | `outputs` | 期望产出物的 glob（相对工作区），用于产物清单筛选 |
 | `timeoutMs` | 副机侧超时，默认 1 小时 |
 | `denyPaths` | 额外禁止访问的绝对路径 |
