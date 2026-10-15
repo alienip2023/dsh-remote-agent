@@ -6,7 +6,11 @@
 
 ## 1. `source.kind: 'plugin'` 不在框架 `MessageSourceMap` 类型里
 
-**状态**：运行时可用，代码不改。
+**状态**：**已修（2026-10-15）** —— `PLUGIN_SOURCE` 改为白名单内的
+`{ kind: 'cordis-host-runner' }`（见 commit 20919b5）。本节保留完整记录：
+它当时预言的残余风险（"框架加白名单校验后投递会被拒"）随后真的发生了
+—— 这正是 agent 模式"约 20ms 假完成、零输出、零报错"的第一个根因。
+改动前后的推理过程有保留价值，故不删。
 
 **背景**：`lib/node/runner.js` 投递任务书时显式传
 `source: { kind: 'plugin', plugin: 'dsh-remote-agent' }`。

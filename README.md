@@ -23,11 +23,36 @@
 
 | | |
 |---|---|
-| **状态** | 0.1.0 —— 主机侧端到端可用；副机侧 `exec` 后端可用，`agent` 后端待修（见 [KNOWN-ISSUES](KNOWN-ISSUES.md)）|
+| **状态** | 0.1.0 —— 主机侧端到端可用；副机 `exec` 可用，`agent` 后端两个根因已修（source 类型 + 模型选择），**待实机端到端确认**（见 [KNOWN-ISSUES](KNOWN-ISSUES.md)）|
 | **DSH** | 桌面版 / CLI，0.2.0-rc.2 验证 |
 | **平台** | Windows（全量验证）· Linux / macOS（CI 覆盖）|
 | **依赖** | **零外部 npm 依赖** —— 只用 `node:` 内置模块 |
 | **Node** | `^22.19.0 \|\| >=24.0.0` |
+
+---
+
+## 五分钟上手
+
+不读下面的任何细节，跟着向导走就能配好。**两台机器各跑一次向导**：
+
+```bash
+node bin/dsh-remote-setup.js
+```
+
+1. **主机上跑**：选「1=主机」→ 向导自动找本机局域网 IP、生成 `nt_` 强随机
+   `nodeToken`、替你把两台机器的 YAML 都写出来（含**防火墙放行命令**）。
+2. **副机上跑**：选「2=副机」→ 粘上主机地址与 token → 向导会**先探活主机
+   端口**，然后生成副机配置。最坑的 `inject: []` 已替你填好（不填它副机
+   会永远静默不上线）。
+3. 两台重启 DSH，对主机说一句「**副机上有哪些节点在线？**」—— 在线即通。
+4. 出问题就体检（读取配置文件逐项检查，每项 ✗ 都带怎么修）：
+
+```bash
+node bin/dsh-remote-setup.js --doctor 你的配置.yml
+```
+
+不想交互？一条命令直接生成：`--role worker --hub-url 192.168.1.10:19387
+--token nt_xxx --roots D:\work --node-id slave-pc`。
 
 ---
 
@@ -157,6 +182,7 @@ dsh plugin add github:zbzbhs/dsh-remote-agent
 | `lib/node/**` | 副机侧：拨入、任务引擎、产物服务、exec/agent 双后端 |
 | `lib/client.js` | 浏览器半边（Web 面板） |
 | `lib/protocol.js` | 线协议（帧类型、错误码、`PROTOCOL_VERSION`） |
+| `lib/setup.js` + `bin/dsh-remote-setup.js` | 小白向导（配置生成 / doctor 体检 / 连接错误人话翻译） |
 | `lib/relay.js` + `bin/dsh-remote-relay.js` | 中继（NAT 场景的会合点） |
 | `profiles/**` | 部署档案与配置片段 |
 | `scripts/**` | 中继初始化（systemd / 计划任务）+ 质量检查脚本 |

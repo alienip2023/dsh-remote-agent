@@ -351,6 +351,40 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
     'test/tool-output-plain.test.js')
 }
 
+/* ── 36~40. 小白向导（lib/setup.js + bin/dsh-remote-setup.js） ──
+ *
+ * 向导的存在意义是"小白不看细节也能配好"，所以它的关键承诺必须钉住：
+ *   - README 有五分钟上手入口（否则向导等于不存在）
+ *   - 生成器替用户填好 inject: []（部署失败头号坑）
+ *   - doctor 每条失败检查都带修法（只报问题不给修法等于没查）
+ *   - worker 的连接错误有"人话翻译"（小白看到 ECONNREFUSED 会直接放弃）
+ *   - package.json 声明了 bin 入口（否则 npm 包里找不到命令）
+ */
+{
+  const rootReadme = read('README.md')
+  const setupLib = read('lib/setup.js')
+  const nodeIndex = read('lib/node/index.js')
+  check('36', 'README 有「五分钟上手」且提到向导与 --doctor',
+    /五分钟上手/.test(rootReadme) && /--doctor/.test(rootReadme) && /dsh-remote-setup/.test(rootReadme),
+    'README.md 五分钟上手一节')
+  check('37', 'package.json 声明了 dsh-remote-setup 的 bin 入口且文件存在',
+    pkg.bin?.['dsh-remote-setup'] === './bin/dsh-remote-setup.js'
+      && fs.existsSync(path.join(ROOT, 'bin', 'dsh-remote-setup.js')),
+    'package.json bin + bin/dsh-remote-setup.js')
+  check('38', '生成器替用户填好 inject: []（worker 片段必须自带）',
+    /inject:\s*\[\]/.test(setupLib),
+    'lib/setup.js buildWorkerYaml')
+  check('39', 'doctor 检查结果带修法（chk 的 fix 字段被 renderDoctor 输出）',
+    /怎么修/.test(setupLib) && /fix: ok \? '' : fix/.test(setupLib),
+    'lib/setup.js chk/renderDoctor')
+  check('40', 'worker 连接错误走 friendlyConnectError 人话翻译',
+    /friendlyConnectError/.test(nodeIndex),
+    'lib/node/index.js error 监听')
+  check('41', 'README 工具表声明了 model 参数',
+    /model/.test(rootReadme) && /normalizeModelSelection/.test(read('lib/protocol.js')),
+    'README.md remote_task 参数表 + lib/protocol.js')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

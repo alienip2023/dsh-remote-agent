@@ -45,6 +45,10 @@ function makeCopy(t) {
     'lib/protocol.js',
     'lib/glob.js',
     'lib/relay.js',
+    // 向导断言（36~39）会读 lib/setup.js 并检查 bin/dsh-remote-setup.js 存在 ——
+    // 漏了这里，全部用例会因 ENOENT 失败而不是断言失效（该脆弱点已踩过两次）。
+    'lib/setup.js',
+    'bin',
     'lib/hub',
     'lib/node',
     'profiles',

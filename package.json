@@ -29,6 +29,7 @@
     "./worker": "./lib/node/index.js",
     "./protocol": "./lib/protocol.js",
     "./relay": "./lib/relay.js",
+    "./setup": "./lib/setup.js",
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./profiles/hub.cordis.yml": "./profiles/hub.cordis.yml",
@@ -36,7 +37,8 @@
   },
   "main": "./lib/index.js",
   "bin": {
-    "dsh-remote-relay": "./bin/dsh-remote-relay.js"
+    "dsh-remote-relay": "./bin/dsh-remote-relay.js",
+    "dsh-remote-setup": "./bin/dsh-remote-setup.js"
   },
   "files": [
     "lib",

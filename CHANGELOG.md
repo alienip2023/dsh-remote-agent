@@ -11,6 +11,71 @@
 
 ## [Unreleased]
 
+### 新增：小白向导 + remote_task 支持指定副机模型
+
+#### `bin/dsh-remote-setup.js` —— 配置向导（小白也能配好）
+
+部署这个插件要写 YAML、算 IP、生成 token、记住 `inject: []` 的坑 ——
+每一件都对小白不友好。向导把全过程收敛成三次回车：
+
+- **交互式**（无参数运行）：问"主机还是副机"→ 自动枚举本机局域网 IP →
+  自动生成 `nt_` 强随机 token → roots 输入时自动创建缺失目录 →
+  输出两台机器可直接粘贴的 cordis YAML。**副机片段的 `inject: []`
+  由生成器替用户填好**（部署失败头号坑：不填它该行永远 PENDING 且无报错）。
+  主机路径还会打印防火墙放行命令；副机路径会先 TCP 探活主机端口。
+- **非交互**：`--role hub|worker --hub-url --token --node-id --roots a,b --out 文件`
+- **`--doctor <配置.yml>`**：逐项体检（Node 版本 / hubUrl 合法性 / token 与
+  公网暴露 / roots 存在性 / nodeId 形状 / 端口可达性），每条 ✗ 都带
+  "怎么修"。
+
+纯逻辑在 `lib/setup.js`（14 条测试）；`lib/node/index.js` 的连接错误提示
+改走同一份 `friendlyConnectError` 映射 —— 副机日志里的 `ECONNREFUSED`
+现在旁边多一行"端口没人听 —— 检查 ①DSH 在跑 ②IP/端口 ③防火墙"。
+
+#### `remote_task` 新增 `model` 参数 —— 主机可指定副机用的模型
+
+    remote_task { goal, model: { model: "deepseek-reasoner" } }
+    remote_task { goal, model: { provider: "openai", model: "gpt-4o" } }
+
+- **只传选择，不传凭证**（核心不变式 1）：协议里流动的是 provider/model 名，
+  模型 key 始终在副机。指定的模型在副机不存在时任务会以明确错误失败
+  （错误经 367daef 修复后的 agent/error 监听进入 handoff）。
+- **in-process 后端**：`buildAgentOptions(defaultSel, requested)` 合成
+  "副机默认 × 主机指定"，主机字段优先、缺的借默认补齐（只给模型名时
+  provider 借副机默认）。
+- **headless 后端明确拒绝**（`modelUnsupported`）：`dsh headless` 把模型
+  硬编码为副机默认选择、无 CLI flag（对照 app.asar 内 dsh-headless 源码
+  核实）—— 静默忽略会让"以为指定了模型、实际跑的是默认"，排查方向
+  直接跑偏，所以如实失败。
+- **TaskStore.create 的字段白名单补 `model`**：此前 spec 里的 model 会在
+  落盘时被丢掉 —— agent 任务重启后 reconcile 重跑时模型选择必须跟任务走。
+- 三条入口接通：remote_task 工具、Web 面板 dispatch（body.model）、
+  README 工具表与 systemPrompt 同步。subagent provider 不接（框架
+  `capabilities.agentOptions=false`，请求里没有自然载体）。
+
+### 修复：健壮性两处（评审遗留）
+
+- **transport 握手超时**：upgrade 后 welcome/accepted 不来必须在 10s 内
+  毁连接走重连 —— 此前"TCP 连着但永远上不了线"的哑状态没有任何报错。
+  （带陈旧连接守卫与三处定时器清理；mock timers 行为级回归。）
+- **pull-manager**：① 分块帧缺 offset 按畸形帧失败（hash-mismatch），
+  不再静默跳过校验继续写盘；② 空闲超时重臂用**本条 pull 自己的**
+  timeoutMs —— 此前第一个分块后回退到 limits 值，自定义短超时静默失效。
+
+### 文档
+
+- README 新增「五分钟上手」；状态行更正（agent 后端两根因已修、待实机确认）。
+- KNOWN-ISSUES §1 标注已修（`kind: 'plugin'` → `cordis-host-runner`），
+  保留推理记录 —— 它预言的残余风险后来真的发生了。
+- check-doc-drift 65 → 71 条（新增向导承诺断言：README 入口 / bin 声明 /
+  生成器填 inject / doctor 带修法 / 错误人话翻译 / model 参数）。
+
+### 新增（同轮，之前提交）
+
+- **transport 握手超时**、**pull-manager offset 必填与重臂预算**
+  （commit 0d3f56b，9 条 mock-timers 行为回归）。
+- **remote_task 的 model 参数端到端**（commit 9dc0f23，15 条分层回归）。
+
 ### 修复（第二轮：独立评审 + 中优先级）
 
 一次外部独立评审（2026-10-15）报出 3 个高优先级 + 若干中优先级问题。
