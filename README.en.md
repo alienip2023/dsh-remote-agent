@@ -109,6 +109,7 @@ These are the design premises of this package — read them before changing it:
 |---|---|
 | **Credentials never leave the worker** | The protocol carries no model keys; the worker uses its own model config |
 | **Disconnects don't kill tasks** | Tasks keep running locally on the worker; even a relay outage finishes, and reconciliation happens on reconnect |
+| **The relay sees only ciphertext** | In relay mode, business frames are end-to-end encrypted (X25519 + AES-256-GCM, see [SECURITY.md](SECURITY.md)): the relay only sees the routing envelope (`t`/`id`/`to`/`from`); goals and artifact contents are all ciphertext |
 | **Manifest before bytes** | On completion only the manifest + handoff come back; artifacts transfer only via `remote_pull` |
 | **Only `role:final` crosses the wire** | Logs / caches / intermediate build files stay on the worker; only metadata is reported |
 | **Resumable transfer** | If `remote_pull` drops mid-transfer, it does not restart from zero: received bytes are kept, retries resume from the offset, full sha256 verification still applies |
@@ -208,7 +209,11 @@ snippets and verification commands for every path, plus a **fallback chain**:
 direct when possible, otherwise fall back to a relay VPS or a cloudflared
 tunnel; if the whole chain is down the worker keeps running locally and
 reconciles on reconnect. The relay VPS deployment template (TLS-ready) lives in
-[deploy/relay-vps/](deploy/relay-vps/).
+[deploy/relay-vps/](deploy/relay-vps/). In relay mode business frames travel
+**end-to-end encrypted** (the relay sees only ciphertext; plaintext goals and
+artifacts never cross it; the handshake is initiated by the worker and falls
+back to plaintext compatibility after a 5 s timeout with legacy relays).
+Security boundaries and known limitations: [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -282,6 +287,7 @@ computer.** Read **[SECURITY.md](SECURITY.md)** before deploying — especially:
 | `lib/node/**` | Worker side: dial-in, task engine, artifact service, exec/agent backends |
 | `lib/client.js` | Browser half (Web panel) |
 | `lib/protocol.js` | Wire protocol (frame types, error codes, `PROTOCOL_VERSION`) |
+| `lib/e2e.js` | Relay-link end-to-end encryption (X25519 handshake + ed25519 authentication + AES-256-GCM frame sealing) |
 | `lib/setup.js` + `bin/dsh-remote-setup.js` | Beginner wizard (config generation / doctor check / plain-language connect-error translation) |
 | `lib/relay.js` + `bin/dsh-remote-relay.js` | Relay (rendezvous point for NAT scenarios) |
 | `profiles/**` | Deployment profiles and config snippets |

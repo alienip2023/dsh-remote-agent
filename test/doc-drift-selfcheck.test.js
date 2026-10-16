@@ -66,6 +66,9 @@ function makeCopy(t) {
     // transport.js/hub-pin.js，但 identity 在 lib/ 根下，必须单独列
     // （该脆弱点第四次踩到，注释留档）。
     'lib/identity.js',
+    // E2E 断言（71~72）读 lib/e2e.js —— 同为 lib/ 根下新文件，必须单独列
+    // （该脆弱点第五次，注释留档）。
+    'lib/e2e.js',
     'bin',
     'lib/hub',
     'lib/node',

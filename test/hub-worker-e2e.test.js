@@ -876,3 +876,199 @@ test('hub⇄worker e2e：remote-agent subagent provider 接线正确', async (t)
     assert.doesNotThrow(() => nodesDef.output.render({}, broken), `render(${JSON.stringify(broken)})`)
   }
 })
+
+/* ══════════════════════════════════════════════════════════════════
+ * E2E 会话加密（提案 #1）：握手、密文不可读、伪造拒绝、丢会话自愈
+ * ══════════════════════════════════════════════════════════════════ */
+
+/**
+ * 在中继侧架一个"窃听器"：把 hub 客户端、中继↔hub、中继↔node 三条写路径
+ * 全部包一层，记录所有上写网的文本与字节。三者合起来覆盖了 relay 模式下
+ * 明文可能流经的全部方向（中继转发不变形：文本原样、二进制净荷原样）。
+ */
+function wireTap(relay, hubRegistry) {
+  // startRelay 返回的是包装对象 {relay, port, hubToken, ...}，真实例在 .relay
+  const r = relay.relay ?? relay
+  const chunks = []
+  const recordText = (s) => chunks.push(Buffer.from(String(s), 'utf8'))
+  const wrap = (conn, _) => {
+    if (!conn) return
+    const origSend = conn.send.bind(conn)
+    const origSendBinary = conn.sendBinary.bind(conn)
+    conn.send = (text) => {
+      recordText(text)
+      return origSend(text)
+    }
+    conn.sendBinary = (buf) => {
+      chunks.push(Buffer.from(buf))
+      return origSendBinary(buf)
+    }
+  }
+  wrap(hubRegistry.relay?.conn, 'hub-client')
+  for (const h of [...r.hubs]) wrap(h, 'relay-hub')
+  for (const n of [...r.nodes.values()]) wrap(n.conn, 'relay-node')
+  return {
+    chunks,
+    /** 密文里绝不允许出现这段明文 */
+    leaks(needle) {
+      const buf = Buffer.from(needle, 'utf8')
+      return chunks.some((c) => c.includes(buf))
+    },
+  }
+}
+
+/** 等节点的 E2E 会话在 hub 侧建立（rec.e2e 就绪）。 */
+async function waitForE2E(registry, nodeId, { timeoutMs = 15000 } = {}) {
+  const started = Date.now()
+  for (;;) {
+    if (registry.getNode(nodeId)?.e2e) return
+    if (Date.now() - started > timeoutMs) throw new Error(`timeout waiting for e2e session on ${nodeId}`)
+    await new Promise((r) => setTimeout(r, 20))
+  }
+}
+
+test('hub⇄worker e2e（relay）：E2E 握手建立，任务 goal 对中继窃听器不可见', async (t) => {
+  const root = tmpRoot(t)
+  const relay = await startRelay(t)
+  const env = await setup(t, { root, mode: 'relay', relay })
+
+  await waitForE2E(env.hub.registry, env.nodeId)
+  const tap = wireTap(relay, env.hub.registry)
+
+  const secret = 'E2E-SECRET-GOAL-7f3a9c'
+  const { handoff } = await runExecTask(t, env, {
+    goal: writeFileCmd('e2e-out.txt', secret),
+    outputs: ['*.txt'],
+  })
+  assert.equal(handoff.status, TASK_STATUS.COMPLETED)
+
+  // capture 真的在干活（帧确实流经了被包的路径）。窃听器架在握手之后，
+  // 一个 exec 任务周期约 8 条记录：task/start 走 hub→relay、relay→node 两路，
+  // node 的 progress/status 走 relay→hub 一路。
+  assert.ok(tap.chunks.length >= 6, `窃听器应记录到任务帧，实际 ${tap.chunks.length}`)
+  assert.ok(tap.chunks.some((c) => c.includes(Buffer.from('"task/'))), '应能看到任务帧的明文信封头（t 字段不加密）')
+
+  // 但 goal 与成品内容必须是密文 —— 中继看不见
+  assert.equal(tap.leaks(secret), false, 'goal/成品内容泄漏到了中继可见的字节流里')
+  assert.equal(tap.leaks('E2E-SECRET-GOAL'), false)
+})
+
+test('hub⇄worker e2e（relay）：产物分块经 E2E，字节一致且内容不可见', async (t) => {
+  const root = tmpRoot(t)
+  const relay = await startRelay(t)
+  const env = await setup(t, { root, mode: 'relay', relay })
+
+  await waitForE2E(env.hub.registry, env.nodeId)
+
+  const secret = 'E2E-BINARY-SECRET-b4d81f'
+  // 注意：产物分类按内置扩展名表（outputs 只是扫描过滤器，不提升角色），
+  // 二进制成品要用 MEDIA_EXT 里的扩展名（.png）才会被判 final 可 pull。
+  const name = 'secret.png'
+  const content = Buffer.concat([
+    Buffer.from(secret, 'utf8'),
+    Buffer.from([0x00, 0xff, 0x80, 0x01]),
+    Buffer.from(secret, 'utf8'),
+  ])
+  fs.writeFileSync(path.join(env.wsRoot, name), content)
+
+  const { taskId, handoff } = await runExecTask(t, env, {
+    goal: writeFileCmd('note.txt', 'ok'),
+    outputs: ['*.png', '*.txt'],
+  })
+  assert.equal(handoff.status, TASK_STATUS.COMPLETED)
+
+  const tap = wireTap(relay, env.hub.registry)
+  const dest = path.join(root, 'pulled-e2e')
+  const pulled = await env.tool('remote_pull')({ taskId, paths: [name], dest })
+  assert.equal(pulled.pulled.length, 1, `pull 应成功: ${JSON.stringify(pulled)}`)
+  const got = fs.readFileSync(pulled.pulled[0].dest)
+  assert.equal(Buffer.compare(got, content), 0, 'E2E 下二进制产物逐字节相等')
+  assert.equal(tap.leaks(secret), false, '产物明文泄漏到了中继可见的字节流里')
+})
+
+test('hub⇄worker e2e（relay）：伪造 hub 直发明文 task/start 被副机拒绝', async (t) => {
+  const root = tmpRoot(t)
+  const relay = await startRelay(t)
+  const env = await setup(t, { root, mode: 'relay', relay, resourceIntervalMs: 100 })
+
+  await waitForE2E(env.hub.registry, env.nodeId)
+
+  // 攻击者 = 中继运营者：用 hubToken（中继配置里本来就有）开一条自己的 hub 连接，
+  // 直接给副机发明文 task/start —— 加密层是唯一挡住它的防线。
+  const { connect } = await import('../lib/ws.js')
+  const { HUB_TO_NODE, envelope, encodeFrame, decodeFrame } = await import('../lib/protocol.js')
+  const evil = await connect(`${relay.url}?role=hub`, { headers: { 'x-relay-token': relay.hubToken }, name: 'evil-hub' })
+  const received = []
+  evil.on('message', (payload) => {
+    const dec = decodeFrame(payload)
+    if (dec.ok) received.push(dec.frame)
+  })
+
+  const fakeTaskId = 'fake-evil-1'
+  const fakeGoal = writeFileCmd('pwned.txt', 'owned-by-relay-operator')
+  evil.send(encodeFrame({ ...envelope(HUB_TO_NODE.TASK_START, {
+    taskId: fakeTaskId,
+    goal: fakeGoal,
+    mode: 'exec',
+    workspace: env.wsRoot,
+    approval: 'auto',
+  }), to: env.nodeId }))
+
+  // 等副机的回应（密文 error 帧 —— t 明文可见）
+  const deadline = Date.now() + 8000
+  let errFrame
+  while (Date.now() < deadline && !errFrame) {
+    errFrame = received.find((f) => f.t === 'error')
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  assert.ok(errFrame, '副机应对明文业务帧回 error 帧')
+  assert.equal(errFrame.d?.e2e, 1, '回执必须是加密的（窃听者读不出内容）')
+
+  // 执行必须被挡死：工作区里不得出现 pwned.txt
+  await new Promise((r) => setTimeout(r, 500))
+  assert.equal(fs.existsSync(path.join(env.wsRoot, 'pwned.txt')), false, '明文 task/start 绝不能被执行')
+
+  evil.close(1000, 'done')
+
+  // 自愈：hub 侧会话未被波及，后续派单照常（加密链路依旧贯通）
+  const { handoff } = await runExecTask(t, env, { goal: writeFileCmd('after.txt', 'ok'), outputs: ['after.txt'] })
+  assert.equal(handoff.status, TASK_STATUS.COMPLETED)
+})
+
+test('hub⇄worker e2e（relay）：hub 丢会话后经遥测帧自动重协商', async (t) => {
+  const root = tmpRoot(t)
+  const relay = await startRelay(t)
+  const env = await setup(t, { root, mode: 'relay', relay, resourceIntervalMs: 100 })
+
+  await waitForE2E(env.hub.registry, env.nodeId)
+
+  // 模拟 hub 重启丢上下文：会话对象直接抹掉（密钥材料销毁）
+  const rec = env.hub.registry.getNode(env.nodeId)
+  rec.e2e.destroy()
+  rec.e2e = null
+
+  // 副机 100ms 遥测帧（已加密）到达 hub → 无会话 → e2e-reset → 副机重新握手
+  const started = Date.now()
+  for (;;) {
+    if (env.hub.registry.getNode(env.nodeId)?.e2e) break
+    if (Date.now() - started > 15000) throw new Error('timeout waiting for e2e re-key')
+    await new Promise((r) => setTimeout(r, 20))
+  }
+
+  // 重协商后任务链路照常
+  const { handoff } = await runExecTask(t, env, { goal: writeFileCmd('rekey.txt', 'ok'), outputs: ['rekey.txt'] })
+  assert.equal(handoff.status, TASK_STATUS.COMPLETED)
+})
+
+test('hub⇄worker e2e（direct）：E2E 在直连模式同样生效', async (t) => {
+  const root = tmpRoot(t)
+  const env = await setup(t, { root, mode: 'direct' })
+
+  // direct 模式 hub 看得到 hello，身份在 welcome 里验证，握手一样走 node/e2e
+  await waitForE2E(env.hub.registry, env.nodeId)
+
+  const { handoff } = await runExecTask(t, env, { goal: writeFileCmd('direct-e2e.txt', 'ok'), outputs: ['direct-e2e.txt'] })
+  assert.equal(handoff.status, TASK_STATUS.COMPLETED)
+  // 会话确实在（而不是旧版明文路径碰巧跑通）
+  assert.ok(env.hub.registry.getNode(env.nodeId).e2e, 'direct 模式也应有 E2E 会话')
+})

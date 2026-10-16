@@ -96,6 +96,7 @@ node bin/dsh-remote-setup.js --doctor 你的配置.yml
 |---|---|
 | **凭证不离开副机** | 协议里不带模型 key；副机用自己的模型配置 |
 | **断连不终止任务** | 任务在副机本地持久运行，中继挂了也跑完，重连后自动对账 |
+| **中继只见密文** | relay 模式业务帧端到端加密（X25519 + AES-256-GCM，见 [SECURITY.md](SECURITY.md)）：中继只看得到路由信封（`t`/`id`/`to`/`from`），goal 与成品内容全部密文 |
 | **清单先于字节** | 任务结束只回 manifest + handoff；成品要 `remote_pull` 才传输 |
 | **只有 `role:final` 过河** | 日志/缓存/中间构建文件只在副机留存，仅上报元数据 |
 | **断点续传** | `remote_pull` 途中掉线/超时不从头重传：已收字节保留，重试自动从中段续传，全文 sha256 校验照旧 |
@@ -182,7 +183,10 @@ npm install -g dsh-remote-agent
 **[profiles/README.md](profiles/README.md)** —— 那里有每条路径的配置片段与验证命令，
 以及一条**降级链**：能直连走 direct，不通就降级到中继 VPS 或 cloudflared 隧道；
 链路全断时副机本地续跑、重连自动对账。中继的 VPS 部署模板（含 TLS 前置）
-在 [deploy/relay-vps/](deploy/relay-vps/)。
+在 [deploy/relay-vps/](deploy/relay-vps/)。relay 模式下业务帧走**端到端加密**
+（中继只见密文，明文 goal/成品不流经中继；握手由副机主动发起，5 秒内无
+ack 自动按明文兼容旧中继继续），安全边界与已知局限见
+[SECURITY.md](SECURITY.md)。
 
 ---
 
@@ -253,6 +257,7 @@ npm install -g dsh-remote-agent
 | `lib/node/**` | 副机侧：拨入、任务引擎、产物服务、exec/agent 双后端 |
 | `lib/client.js` | 浏览器半边（Web 面板） |
 | `lib/protocol.js` | 线协议（帧类型、错误码、`PROTOCOL_VERSION`） |
+| `lib/e2e.js` | 中继链路端到端加密（X25519 握手 + ed25519 认证 + AES-256-GCM 帧封） |
 | `lib/setup.js` + `bin/dsh-remote-setup.js` | 小白向导（配置生成 / doctor 体检 / 连接错误人话翻译） |
 | `lib/relay.js` + `bin/dsh-remote-relay.js` | 中继（NAT 场景的会合点） |
 | `profiles/**` | 部署档案与配置片段 |

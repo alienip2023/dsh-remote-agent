@@ -644,6 +644,39 @@ check('49', '真实运行时自检脚本存在，KNOWN-ISSUES 第 8 节记录验
     'CHANGELOG.md [未发布] 段')
 }
 
+/* ── 71/72. 中继链路端到端加密（提案 #1）──
+ *
+ * E2E 是安全承诺：文档说"中继只见密文"，代码就得真的有会话协商与
+ * 明文业务帧拒绝。钉两侧：文档侧（71）钉 README 不变式行 + SECURITY
+ * 专节（含已知局限的如实声明）+ CHANGELOG 条目；代码侧（72）钉
+ * lib/e2e.js 核心导出、协议帧常量与 hub/node 两侧接线的函数名。
+ */
+{
+  const e2eReadme = read('README.md')
+  const e2eSecurity = read('SECURITY.md')
+  const e2eChangelog = read('CHANGELOG.md')
+  const e2eLib = read('lib/e2e.js')
+  const e2eProtocol = read('lib/protocol.js')
+  const e2eTransport = read('lib/node/transport.js')
+  const e2eIngest = read('lib/hub/registry-ingest.js')
+  const e2eNodeReg = read('lib/hub/node-registry.js')
+
+  check('71', 'E2E 文档承诺：README 不变式行 + SECURITY 专节（含主动降级与明文拒绝）+ CHANGELOG 条目',
+    /中继只见密文/.test(e2eReadme) && /lib\/e2e\.js/.test(e2eReadme)
+    && /中继链路端到端加密（提案 #1）/.test(e2eSecurity) && /e2e-required/.test(e2eSecurity)
+    && /主动降级/.test(e2eSecurity) && /X25519/.test(e2eSecurity)
+    && /中继链路端到端加密（提案 #1）/.test(e2eChangelog) && /relayE2E/.test(e2eChangelog),
+    'README.md + SECURITY.md + CHANGELOG.md 的 E2E 锚点')
+
+  check('72', 'E2E 代码锚点：密钥协商/帧封核心 + 协议常量 + hub/node 两侧接线都在',
+    /generateEphemeral/.test(e2eLib) && /deriveSessionKey/.test(e2eLib)
+    && /E2E_OFFER/.test(e2eProtocol) && /E2E_ACK/.test(e2eProtocol)
+    && /E2E_REQUIRED/.test(e2eProtocol) && /E2E_RESET/.test(e2eProtocol)
+    && /handleE2EAck/.test(e2eTransport) && /E2E_REQUIRED_TYPES/.test(e2eTransport)
+    && /handleE2EOffer/.test(e2eIngest) && /E2E_CLEAR_TYPES/.test(e2eNodeReg),
+    'lib/e2e.js + protocol.js + transport.js + registry-ingest.js + node-registry.js')
+}
+
 /* ── 65. eslint 严格档三件套 ──
  *
  * lint 是 CI 的第三条防线（no-undef 首跑就抓到过 numOr 真 bug）。
