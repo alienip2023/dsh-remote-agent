@@ -173,16 +173,26 @@ test('setup apply 走 writePatchBlock（备份 + 托管块 + 回滚）', () => {
   assert.match(code, /writePatchBlock\(\{ file, blockYaml/, '应调 writePatchBlock')
 })
 
-/* ─────────────── 3. 包内 inject 取最小集 ─────────────── */
+/* ─────────────── 3. 包内 inject ─────────────── */
 
-test('包内 cordis.patch.yml：inject 只声明 webServer，role 为空', () => {
-  // 未配置时只需要 webServer（够注册引导路由）。tools/systemPrompt 会让
-  // 缺少它们的组合永远 PENDING —— 而"未配置"恰恰是最需要能激活的状态。
-  assert.match(patch, /inject: \['webServer'\]/, "包内 inject 应是最小集 ['webServer']")
-  assert.ok(
-    !/inject: \['webServer', 'tools', 'systemPrompt'\]/.test(patch),
-    '包内 inject 不得含 tools/systemPrompt —— 缺它们的组合会永远 PENDING，连引导都拿不到',
-  )
+test('包内 cordis.patch.yml：inject 取 hub 全集，role 为空', () => {
+  // ⚠ 这条断言改过一次（2026-10-16），记录决策反转的原因：
+  //
+  // **曾经**要求 `inject: ['webServer']`（最小集），理由是"未配置时只需要
+  // webServer，tools/systemPrompt 会让缺它们的组合永远 PENDING"。
+  //
+  // **但那是错的**：`applyHub` 需要全部三个。而 profile 里没写 inject 的机器
+  // （旧配置、手写配置）合并后就是 `['webServer']` → hub 分支访问 `ctx.tools`
+  // 抛 `cannot get property "tools" without inject` → fiber failed →
+  // **路由活着但 8 个工具全没了，插件页显示"异常"**。
+  //
+  // 现在取 hub 全集：desktop profile 三个服务都在，未配置时多声明两个无害
+  // （只在 hub 分支被访问）；选了 worker 的用户，引导流程会把 inject 一并改写。
+  //
+  // ⚠ 匹配必须锚定行首 —— 文件注释里有多处 `inject: ['webServer']`（事故记录），
+  // 不锚定会命中注释里那句（第一版就是这样，误报）。
+  assert.match(patch, /^\s*inject: \['webServer', 'tools', 'systemPrompt'\]/m,
+    "包内 inject 应含 hub 需要的三个服务")
   assert.match(patch, /role: ''/, "包内 role 默认应为空（未配置）")
 })
 

@@ -48,26 +48,40 @@
 # 所以在**行上**声明 inject：框架会**推迟本行的激活**直到这些服务就绪，只 apply
 # 一次、没有子 fiber 抖动。这是唯一被验证可用的形态。
 #
-# ── 为什么 inject 只声明 webServer（2026-10-15 修订）────────────────────
+# ── 为什么 inject 是 hub 的三个服务（2026-10-15 二次修订）──────────────
 #
-# `inject` 必须**跟着角色走**，而角色在首次安装时**还不知道**（只有用户知道）：
+# `inject` 必须**跟着角色走**：
 #
-#   role: ''（未配置）→ 只需要 webServer —— 够注册引导路由，让面板显示选择界面
-#   role: hub         → webServer + tools + systemPrompt（注册路由与工具）
-#   role: worker      → tools + agentLoop + sessions
+#   role: ''（未配置）→ 需要 webServer（注册引导路由）
+#   role: hub         → **需要 webServer + tools + systemPrompt**
+#   role: worker      → 需要 tools + agentLoop + sessions
 #                       （agent 的 ctx **继承本行的依赖声明**，少了 tools 就
-#                        挂不上 shell/文件工具 —— 实测踩过这个坑）
+#                        挂不上 shell/文件工具 —— 实测踩过）
 #
-# 而包内 patch 只能写一份。所以这里取**最小集**（webServer），并让"选角色"
-# 那一步（面板引导 / 命令行向导）**把正确的 inject 一起写进 profile** ——
-# 用户只需要选一次角色，两个字段自动配好，不会再出现"改了 role 忘了改 inject"。
+# ── 一次真实的翻车（我把它收窄成 ['webServer'] 导致的）──────────────────
 #
-# 这也顺带修了一个历史问题：旧默认值是 hub 的 inject（三个服务）。副机装完
-# 若没覆盖 inject，本行会一直 PENDING 而不激活 —— 副机永远不拨入，
-# 且**没有任何报错**。
+# 曾把这里改成 `inject: ['webServer']`，理由"未配置时只需要 webServer"。
+# 结果：**profile 里没写 inject 的机器（旧配置 / 手写配置）合并后就是
+# `['webServer']`，hub 分支一访问 `ctx.tools` 就抛**
+#
+#     cannot get property "tools" without inject
+#
+# 而 `applyHub` 里工具注册在路由注册**之后** —— 于是现象是：
+#   · /api/remote-agent/healthz 活着（200，还带着 nodes/online 计数）
+#   · /api/remote-agent/ui/* 活着
+#   · **8 个 remote_* 工具全部消失**
+#   · 插件管理页显示「异常」（fiber phase: failed）
+#
+# 一半活一半死，极难归因。
+#
+# ── 结论 ────────────────────────────────────────────────────────────────
+#
+# 包内默认取 **hub 的全集**：这是"没被 profile 覆盖时"最安全的默认 ——
+# desktop profile 三个服务都在，未配置时多声明两个无害（只在 hub 分支被访问）；
+# 而选了 worker 的用户，引导流程会把 inject 一并改写成 worker 的那三个。
 - insert:
     - id: remote-agent
       name: dsh-remote-agent
-      inject: ['webServer']
+      inject: ['webServer', 'tools', 'systemPrompt']
       config:
         role: ''
