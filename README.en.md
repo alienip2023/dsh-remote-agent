@@ -238,7 +238,8 @@ changes, final artifacts, log tail.
 | Parameter | Meaning |
 |---|---|
 | `goal` | Task brief. In `mode=agent` this is the task statement for the worker's agent; in `mode=exec` it is the command to run |
-| `node` | Target node id. When omitted, exactly one online node is required |
+| `node` | Target node id. When omitted, auto-routed: with multiple nodes the least-loaded one wins (running tasks → CPU → memory; agent mode only considers agent-capable nodes) |
+| `repo` | Route by repository: pass a repo name, remote-URL fragment, or local path fragment — the task goes to a node that holds that repo (load-aware when several do). When `workspace` is omitted, the repo's local path is used automatically. Workers scan git repos under their `roots` after connecting (zero subprocess, credentials stripped locally, refreshed every 10 minutes) |
 | `workspace` | Absolute path on the worker, must be inside the node's `roots`. Defaults when omitted |
 | `mode` | `agent` (worker starts an independent agent session, default) / `exec` (run a command directly) |
 | `model` | Optional. Model the worker should use (`mode=agent` only): `{model:"deepseek-chat"}` or `{provider:"openai",model:"gpt-4o"}`. Selection only, no credentials —— the worker runs it with its own provider config; unsupported on headless backends |

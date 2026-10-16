@@ -194,6 +194,21 @@ hub 在 `<stateDir>/audit.jsonl` 追加记录**派发 / 取消 / 拉取**三类�
 协议里**不带模型 API key**。副机用自己的 DSH 配置与凭证 ——
 主机只能派任务，拿不到副机的模型凭证。
 
+### 仓库清单上报：只报结构，不报凭证（提案 #13）
+
+副机接入后自动扫描 `roots` 下的 git 仓库并上报到 hub：每仓库只含
+**名字、远端 url、本机路径** 三个字段。两条硬边界：
+
+- **url 里的凭证在副机本地剥掉**：`.git/config` 常见
+  `https://user:token@host/...` 的推送凭证，上报前统一打码
+  （见 `lib/node/repos.js` 的 `sanitizeRepoUrl`）——hub 与面板永远拿不到。
+- **扫描零子进程**：只 `readdir` + 读 `.git/config` 文本，不 spawn git，
+  扫描行为完全可从源码审计。
+
+不想暴露目录结构时 `config.reposIntervalMs: 0` 关掉上报（`repo:` 路由
+随之不可用，其余功能不受影响）。注意：仓库路径本身也是主机目录结构的
+一部分 —— 若 `roots` 给了整盘，这条披露与 roots 自身的披露同样成立。
+
 ### 响应体逐字段白名单，绝不 spread
 
 `lib/hub/views.js` 是工具与 UI 共用的投影层，**逐字段构造**。

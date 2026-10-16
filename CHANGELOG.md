@@ -11,6 +11,18 @@
 
 ## [未发布]
 
+### 功能：仓库感知调度（提案 #13）
+
+`remote_task` 新增 `repo:` 参数：传仓库名 / 远端 url 片段 / 本机路径片段，
+任务派给**持有该仓库**的节点（多个时按负载自动选，名字精确匹配优先于包含
+匹配）；省略 `workspace` 时自动用仓库在本机的路径。副机接入后自动扫描
+roots 下的 git 仓库（零子进程，只读 `.git/config`）并上报——**凭证在副机
+本地剥掉**（url 里的 user:token 不出机器），每 10 分钟刷新，
+`reposIntervalMs: 0` 可关。旧 hub 收到新帧按未知帧忽略（混跑安全），
+副机未升级时 `repo:` 会得到明确报错并列出当前已上报的仓库。新增
+`lib/node/repos.js`、`NodeRegistry.pickNodeByRepo` / `findRepoOn` /
+`knownRepoNames`，测试 23 条。`remote_nodes` 与面板节点列表新增 repos 字段。
+
 ### 功能：负载感知自动路由（提案 #14）
 
 `remote_task` 省略 `node` 时的行为变更：多节点在线**不再报错**，改为自动选

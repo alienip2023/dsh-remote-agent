@@ -47,7 +47,8 @@ const KEYS = {
   artifactsView: ['counts', 'bytesFinal', 'final', 'intermediateCount', 'note'].sort(),
   exitView: ['code', 'timedOut', 'aborted', 'runner', 'toolCalls'].sort(),
   errorView: ['code', 'message'].sort(),
-  nodeView: ['nodeId', 'online', 'os', 'arch', 'agentMode', 'roots', 'caps', 'since', 'lastSeen', 'taskCount', 'resource'].sort(),
+  // repos/reposAt：提案 #13 仓库清单（名字列表 + 上报时间）
+  nodeView: ['nodeId', 'online', 'os', 'arch', 'agentMode', 'roots', 'caps', 'since', 'lastSeen', 'taskCount', 'repos', 'reposAt', 'resource'].sort(),
   finalItemView: ['path', 'kind', 'bytes', 'sha256'].sort(),
   changedItemView: ['op', 'path', 'bytes', 'deltaBytes'].sort(),
   progressItemView: ['phase', 'detail', 'at'].sort(),

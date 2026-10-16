@@ -211,7 +211,8 @@ npm install -g dsh-remote-agent
 | 参数 | 说明 |
 |---|---|
 | `goal` | 任务目标。`mode=agent` 时是给副机 agent 的任务书；`mode=exec` 时是要执行的命令 |
-| `node` | 目标节点 id。省略时要求恰好只有一个在线节点 |
+| `node` | 目标节点 id。省略时自动选：多节点按在跑任务数/CPU/内存自动路由（agent 模式只选支持 agent 的节点） |
+| `repo` | 按仓库路由：传仓库名 / 远端 url 片段 / 本机路径片段，任务派给持有该仓库的节点（多个时按负载自动选）。省略 `workspace` 时自动用仓库在本机的路径。副机接入后自动上报 roots 下的 git 仓库（凭证打码，每 10 分钟刷新） |
 | `workspace` | 副机上的绝对路径，必须在节点 `roots` 内。省略用默认 |
 | `mode` | `agent`（副机起独立 agent 会话，默认）/ `exec`（直接跑命令）|
 | `model` | 可选。副机用的模型（仅 `mode=agent` 生效）：`{model:"deepseek-chat"}` 或 `{provider:"openai",model:"gpt-4o"}`。只传选择不传凭证 —— 副机用自己的 provider 配置跑；headless 后端不支持 |
