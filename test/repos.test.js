@@ -32,10 +32,12 @@ test('sanitizeRepoUrl：只带用户名的 url（OAuth 用户名形态）同样�
   assert.equal(sanitizeRepoUrl('https://x-access-token@github.com/me/my-app.git'), 'https://github.com/me/my-app.git')
 })
 
-test('sanitizeRepoUrl：无凭证 url 与 scp 形态原样保留', () => {
+test('sanitizeRepoUrl：无凭证 url 与 scp 形态剥掉用户名', () => {
   assert.equal(sanitizeRepoUrl('https://github.com/me/my-app.git'), 'https://github.com/me/my-app.git')
-  // scp 形态不是合法 URL，解析失败走"原样返回"——@ 前是公开用户名，不是凭证
-  assert.equal(sanitizeRepoUrl('git@github.com:me/my-app.git'), 'git@github.com:me/my-app.git')
+  // scp 形态不是合法 URL，走 catch 分支剥 `user@` —— 真机验证问题4：用户名
+  // 位置可能是 token（自建 Git 服务的常见用法），不能赌它是公开用户名
+  assert.equal(sanitizeRepoUrl('git@github.com:me/my-app.git'), 'github.com:me/my-app.git')
+  assert.equal(sanitizeRepoUrl('token123@github.com:me/my-app.git'), 'github.com:me/my-app.git')
 })
 
 test('sanitizeRepoUrl：空串与垃圾输入不抛', () => {

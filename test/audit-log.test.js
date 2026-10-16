@@ -84,6 +84,34 @@ test('敏感键打码 + 超长值截断（凭证与整段任务书绝不整段�
   assert.equal(lines[0].taskId, 't-2')
 })
 
+test('值级打码：正文里的 token 形态字符串也打 ***（真机验证 §4③ 揪出的缺口）', async (t) => {
+  const dir = tmpDir(t)
+  const audit = createAuditLog({ dir, log: () => {} })
+  audit.record('task.dispatch', {
+    taskId: 't-3',
+    // 键名不含敏感词，但值里内嵌凭证 —— 修复前原样落盘
+    goal: 'curl -H "Authorization: Bearer sk-live-abcdef123456" https://x',
+    command: 'mysql --password=p4ssw0rd db',
+    url: 'https://user:tok123@corp.example/x.git',
+    benign: '部署 token 轮换文档已更新', // "token" 后面没有 = 值，不应误伤
+  })
+  await audit.dispose()
+
+  const lines = readLines(dir)
+  assert.equal(lines.length, 1)
+  const row = lines[0]
+  assert.ok(!row.goal.includes('sk-live-abcdef123456'), 'sk- 前缀 token 必须打码')
+  assert.ok(row.goal.includes('***'))
+  assert.ok(!row.command.includes('p4ssw0rd'), 'password= 形态必须打码')
+  assert.ok(!row.url.includes('tok123'), 'URL userinfo 必须打码')
+  // 高精度口径：普通中文正文不受影响
+  assert.equal(row.benign, '部署 token 轮换文档已更新')
+  // 键名打码仍然生效（双层）
+  audit.record('task.dispatch', { token: 'plain' })
+  await audit.dispose()
+  assert.equal(readLines(dir)[1].token, '***')
+})
+
 test('轮转：超过 maxBytes 换新文件，maxFiles 封顶，旧档依次后移', async (t) => {
   const dir = tmpDir(t)
   // maxBytes=120：约两条记录就超限；maxFiles=2：只留当前 + .1
