@@ -271,7 +271,8 @@ async function setup(t, { root, relay, uiPullRoot, connection, nodeId = 'ui-work
     }
   }
 
-  const hubConfig = { role: 'hub', systemPrompt: false, relay: { url: relay.url, token: relay.hubToken } }
+  // stateDir 必须落在临时目录（同 hub-worker-e2e，防审计写进用户真实状态目录）
+  const hubConfig = { role: 'hub', systemPrompt: false, stateDir: path.join(root, 'hub-state'), relay: { url: relay.url, token: relay.hubToken } }
   if (uiPullRoot !== undefined) hubConfig.uiPullRoot = uiPullRoot
   if (nodeToken !== undefined) hubConfig.nodeToken = nodeToken
   const hub = applyHub(hubCtx.ctx, hubConfig)
@@ -340,6 +341,9 @@ async function runExec(t, env, { goal, workspace, outputs, timeoutMs } = {}) {
     workspace: workspace ?? env.wsRoot,
     outputs,
     timeoutMs,
+    // 提案 #2 起 exec 默认挂起审批 —— 这批用例测的是 pull/投影/校验链路，
+    // 显式 auto 保持"派了就跑"；审批链路在 approval.test.js / e2e 覆盖。
+    approval: 'auto',
   })
   assert.equal(r.status, 200, `dispatch 失败: ${r.text}`)
   const taskId = r.json.taskId

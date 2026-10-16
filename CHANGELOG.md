@@ -11,6 +11,37 @@
 
 ## [未发布]
 
+### 修复：真机验证揪出的四项（docs/verification-repos-routing-real.md）
+
+- **审计值级打码**：此前打码只看键名，任务书正文里内嵌的凭证
+  （`Bearer sk-…`、`password=…`、`://user:pass@`、sk-/ghp- 前缀 token）
+  会明文落进 audit.jsonl 并长期留存。现在字符串值过第二道凭证形态扫描
+  （高精度口径：普通正文不受影响）。
+- **`agentMode` 可配置**：副机 hello 里的 `agentMode` 曾硬编码 `true`，
+  让 #14 的"agent 模式只选支持 agent 的节点"成为空承诺。现在 worker
+  配置 `agentMode: false` 即可关掉（默认 true 不变）。
+- **测试不再污染用户真实状态目录**：hub-worker-e2e / ui-routes 两处测试
+  的 hubConfig 漏传 `stateDir`，审计事件写进了真实的 `~/.dsh-remote-agent/`
+  （跑一次测试写 14 行）。已补上临时目录。
+- **scp 形态 url 剥用户名**：`token123@host:path` 的用户名位置可能是
+  token（自建 Git 服务常见），不再赌它是公开用户名，`user@` 一并剥掉
+  （url 只用于展示与匹配，剥掉无害）。
+
+### 功能：exec 任务两阶段审批（提案 #2）—— ⚠ 行为变更
+
+**`mode:"exec"` 的缺省行为变了**：现在默认 `approval:"manual"` —— hub 收到
+派单后**挂起不派**（副机完全不知道这条任务存在），直到在面板「远程同事」
+的待审批卡上点「批准并派发」才真正下发；挂起超过 `limits.approvalTimeoutMs`
+（默认 30 分钟）**自动拒绝**（fail-closed：等不到人就是不跑，绝不默认放行）。
+想要旧行为显式传 `approval:"auto"`。`mode:"agent"` 缺省不变（auto）。
+
+配套：任务新增 `pending_approval`（非终态）与 `rejected`（终态）两个状态；
+面板派发表单派 exec 任务同样走审批；对挂起任务调用 remote_cancel 等价于
+拒绝（不会向副机发无意义的取消帧）；审计新增 `approval.pending/granted/rejected`
+事件；审批路由 `/ui/approve`、`/ui/reject`（404/409/502 语义）。
+挂起任务占 maxTasksPerNode 活跃额度（防审批队列无界堆积）。
+单元 + e2e 共 15 条。
+
 ### 功能：派发 dry-run 预览（提案 #23）
 
 `remote_task` 新增 `dryRun: true`：走与正式派发**完全相同**的路由（显式

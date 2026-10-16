@@ -236,7 +236,10 @@ async function setup(t, { root, mode, relay, resourceIntervalMs }) {
   const { server, port } = await startHttpServer()
   const hubCtx = makeCtx({ server })
 
-  const hubConfig = { role: 'hub', systemPrompt: false }
+  // stateDir 必须落在临时目录：省略会走 defaultHubStateDir()（用户真实的
+  // ~/.dsh-remote-agent/），审计事件就会写进真实证据链 —— 真机验证揪出
+  // （docs/verification-repos-routing-real.md §4⑤），跑一次测试写 14 行。
+  const hubConfig = { role: 'hub', systemPrompt: false, stateDir: path.join(root, 'hub-state') }
   if (mode === 'relay') {
     hubConfig.relay = { url: relay.url, token: relay.hubToken }
   }
@@ -325,7 +328,7 @@ async function setup(t, { root, mode, relay, resourceIntervalMs }) {
 }
 
 /** 派一条 exec 任务并等它进入终态，返回 { taskId, handoff, status }。 */
-async function runExecTask(t, env, { goal, workspace, outputs, timeoutMs } = {}) {
+async function runExecTask(t, env, { goal, workspace, outputs, timeoutMs, approval } = {}) {
   const r = await env.tool('remote_task')({
     node: env.nodeId,
     goal,
@@ -333,6 +336,9 @@ async function runExecTask(t, env, { goal, workspace, outputs, timeoutMs } = {})
     workspace: workspace ?? env.wsRoot,
     outputs,
     timeoutMs,
+    // 提案 #2 起 exec 任务默认 manual（挂起等审批）—— e2e 的既有用例测的是
+    // 执行链路本身，显式 auto 保持旧行为；审批链路有专门用例。
+    approval: approval ?? 'auto',
   })
   assert.equal(r.accepted, true, `派单未被接受: ${JSON.stringify(r)}`)
 
@@ -461,6 +467,37 @@ test('hub⇄worker e2e：remote_task dryRun 只出预览，不产生任务', asy
     /invalid task: task-goal-missing/,
   )
   assert.equal(env.hub.registry.tasks.size, 0)
+})
+
+/* ══════════════════════════════════════════════════════════════════
+ * 用例 1.6：exec 两阶段审批（提案 #2）—— 批准前副机收不到，批准后跑完
+ * ══════════════════════════════════════════════════════════════════ */
+
+test('hub⇄worker e2e：exec 任务默认挂起待审批，批准后才到副机并跑到终态', async (t) => {
+  const root = tmpRoot(t)
+  const relay = await startRelay(t)
+  const env = await setup(t, { root, mode: 'relay', relay })
+
+  // exec 缺省 manual：创建即挂起，副机侧不应出现这条任务
+  const r = await env.tool('remote_task')({
+    node: env.nodeId,
+    goal: writeFileCmd('approved.txt', 'ok'),
+    mode: 'exec',
+    workspace: env.wsRoot,
+  })
+  assert.equal(r.status, 'pending_approval')
+  assert.equal(r.accepted, false)
+  assert.equal(r.approval, 'manual')
+  assert.equal(env.hub.registry.getTask(r.taskId).status, 'pending_approval')
+
+  // 批准 → 副机此刻才收到 → 跑到终态 completed（真实执行了命令）
+  assert.equal(env.hub.registry.approveTask(r.taskId, { by: 'e2e' }), true)
+  await env.hub.registry.awaitTerminal(r.taskId, { timeoutMs: 60000 })
+  assert.equal(env.hub.registry.getTask(r.taskId).status, 'completed')
+
+  // 产物核实：批准后才真正写出的文件确实存在
+  const manifest = await env.tool('remote_manifest')({ taskId: r.taskId })
+  assert.ok(manifest.counts.total >= 0)
 })
 
 /* ══════════════════════════════════════════════════════════════════
@@ -722,6 +759,7 @@ test('hub⇄worker e2e：remote_cancel 打断长任务并进入终态', async (t
     goal: sleepGoal,
     mode: 'exec',
     workspace: env.wsRoot,
+    approval: 'auto',
   })
   assert.equal(accept.accepted, true)
 
@@ -819,6 +857,7 @@ test('hub⇄worker e2e：remote-agent subagent provider 接线正确', async (t)
     goal: writeFileCmd('auto.txt', 'auto'),
     mode: 'exec',
     workspace: env.wsRoot,
+    approval: 'auto',
   })
   assert.equal(auto.accepted, true)
   assert.equal(auto.node, env.nodeId)

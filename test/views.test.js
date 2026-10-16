@@ -41,8 +41,9 @@ import {
 /** 声明的键集合（排序后比较）。加字段/加 spread 都会让这些断言失败。 */
 const KEYS = {
   handoffView: ['taskId', 'nodeId', 'status', 'mode', 'runner', 'durationMs', 'startedAt', 'endedAt', 'exit', 'summary', 'summaryText', 'changed', 'artifacts', 'pullHint'].sort(),
-  taskView: ['taskId', 'nodeId', 'nodeOnline', 'status', 'mode', 'goal', 'createdAt', 'updatedAt', 'startedAt', 'endedAt', 'durationMs', 'exit', 'error', 'summaryText', 'changedCount', 'changed', 'manifestCounts', 'progressTail', 'logTail'].sort(),
-  taskViewNoLogs: ['taskId', 'nodeId', 'nodeOnline', 'status', 'mode', 'goal', 'createdAt', 'updatedAt', 'startedAt', 'endedAt', 'durationMs', 'exit', 'error', 'summaryText', 'changedCount', 'changed', 'manifestCounts'].sort(),
+  // approval：提案 #2 两阶段审批（'manual' | 'auto'）
+  taskView: ['taskId', 'nodeId', 'nodeOnline', 'status', 'mode', 'approval', 'goal', 'createdAt', 'updatedAt', 'startedAt', 'endedAt', 'durationMs', 'exit', 'error', 'summaryText', 'changedCount', 'changed', 'manifestCounts', 'progressTail', 'logTail'].sort(),
+  taskViewNoLogs: ['taskId', 'nodeId', 'nodeOnline', 'status', 'mode', 'approval', 'goal', 'createdAt', 'updatedAt', 'startedAt', 'endedAt', 'durationMs', 'exit', 'error', 'summaryText', 'changedCount', 'changed', 'manifestCounts'].sort(),
   manifestView: ['counts', 'bytesFinal', 'final'].sort(),
   artifactsView: ['counts', 'bytesFinal', 'final', 'intermediateCount', 'note'].sort(),
   exitView: ['code', 'timedOut', 'aborted', 'runner', 'toolCalls'].sort(),

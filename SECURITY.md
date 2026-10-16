@@ -185,14 +185,29 @@ Web 面板的「拉取」按钮是**唯一**由浏览器触发的写盘动作。
 
 hub 在 `<stateDir>/audit.jsonl` 追加记录**派发 / 取消 / 拉取**三类事件
 （谁在何时让 hub 在哪台机器上跑了什么、哪些成品过了河落在哪）。
-字段过统一打码层：token/password/apiKey 类键值写 `***`，超长值 400 字符截断
-——凭证与整段任务书**绝不整段落盘**。默认开启，体积 8MB × 3 份轮转封顶；
-`config.audit: false` 显式关闭。写入失败只限频告警，**绝不影响任务链路**。
+字段过统一打码层（双层）：**键名**含 token/password/apiKey 类字样的写 `***`；
+**值内**的凭证形态字符串（sk-/ghp-/github_pat_ 前缀 token、`Bearer <token>`、
+`password=值` 等键值对、URL userinfo）同样打 `***` —— 任务书正文里内嵌的
+凭证不落明文（真机验证揪出并修复，见
+docs/verification-repos-routing-real.md §4③）。超长值 400 字符截断。
+默认开启，体积 8MB × 3 份轮转封顶；`config.audit: false` 显式关闭。
+写入失败只限频告警，**绝不影响任务链路**。
 
 ### 凭证不离开副机
 
 协议里**不带模型 API key**。副机用自己的 DSH 配置与凭证 ——
 主机只能派任务，拿不到副机的模型凭证。
+
+### exec 两阶段审批：默认挂起，等不到人不跑（提案 #2）
+
+`mode:"exec"` 的任务**默认 `approval:"manual"`**：hub 收到派单后挂起，
+**副机完全不知道这条任务存在**，直到人在面板上点批准；挂起超过
+`limits.approvalTimeoutMs`（默认 30 分钟）自动拒绝。设计原则是
+**fail-closed**：超时、拒绝、取消都让任务终止，唯一"放行"的路径是人
+明确点批准 —— 绝不存在"没人管就默认执行"。批准时节点恰好掉线 → 任务
+立即转 failed 并给 502，绝不静默退回挂起（那会让"批了但没跑"变成无头案）。
+审计留痕：`approval.pending / granted / rejected` 三类事件进 audit.jsonl。
+想要旧行为显式传 `approval:"auto"`。
 
 ### 仓库清单上报：只报结构，不报凭证（提案 #13）
 
