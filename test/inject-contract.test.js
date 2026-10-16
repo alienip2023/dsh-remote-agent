@@ -153,7 +153,7 @@ test('回归：applyHub 在缺 tools 的 inject 下**不再抛错**（容错生�
     }
     const ctx = {
       registered,
-      effect(fn) { try { const d = fn(); return typeof d === 'function' ? d : () => {} } catch (e) { throw e } },
+      effect(fn) { const d = fn(); return typeof d === 'function' ? d : () => {} },
       on() { return () => {} },
       logger: { info() {}, warn() {}, error() {}, debug() {} },
       get() { return undefined },

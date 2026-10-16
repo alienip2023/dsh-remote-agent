@@ -57,7 +57,6 @@ function loadDropNull() {
   }
   assert.ok(end > 0, '花括号配对失败')
   const fnSrc = src.slice(i, end)
-  // eslint-disable-next-line no-new-func
   return { fn: new Function('return ' + fnSrc)(), src: fnSrc }
 }
 
