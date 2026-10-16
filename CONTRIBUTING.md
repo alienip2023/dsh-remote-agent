@@ -109,18 +109,74 @@ return toPlainJson(dropNullForSchema(value, schema))   // 顺序不能反
 `apply` 保持**同步**。不要改成 `async` —— 实测 `await` 会让子插件的 `apply`
 根本不被调用，且启动被拖慢到连 token 都拿不到。
 
-### 服务访问必须用 `ctx.get()`
+### 服务访问：**已声明的用属性访问，未声明的用 `ctx.get(name, false)`**
+
+**这条规则曾经写错过，而且错的那版让我付出了一整轮排查。** 原文只说了
+"可选服务一律用 `ctx.get()`" —— 但 `ctx.get` 的**默认行为是严格的**：
 
 ```js
-// ✗ 会抛 "cannot get property X without inject"
-const x = ctx.subagents
-
-// ✓
-const x = typeof ctx.get === 'function' ? ctx.get('subagents') : undefined
+// cordis 源码（从 app.asar 提取）
+/**
+ * @param strict — when true, only return implementations whose providing
+ *                 fiber is currently **active**.
+ */
+get(name, strict = true) { ... }
 ```
 
-**未声明 inject 的服务，属性访问会抛错而不是返回 undefined** ——
-所以可选链 `ctx?.foo` 挡不住它。可选服务一律用 `ctx.get()` 探测。
+**`strict = true` 意味着：提供者 fiber 还没激活时返回 `undefined`。**
+
+#### 两条正确的写法
+
+```js
+// ── 已声明 inject 的服务：属性访问（走 internal/get waterfall + fiber store）──
+const webServer = ctx.webServer
+
+// ── 未声明的可选服务：非严格 get ──
+const subagents = typeof ctx.get === 'function' ? ctx.get('subagents', false) : undefined
+```
+
+#### 为什么属性访问优先
+
+| 写法 | 行为 |
+|---|---|
+| `ctx.webServer` | 走 `internal/get` waterfall + fiber store 查找，**能拿到已就绪的服务** |
+| `ctx.get('webServer')` | **strict 默认 true** → provider fiber 未激活时返回 `undefined` |
+| `ctx.get('webServer', false)` | 非严格 → 不管活跃与否都返回 |
+
+**翻车现场**（2026-10-15）：`registerSetupRoutes` 在 `apply()` **早期**被调用，
+那时 `webServer` 的 provider fiber 可能还没激活 → `ctx.get('webServer')` 返回
+`undefined` → **整组引导路由静默跳过**。而现象是：
+
+```
+/api/remote-agent/setup/state  → 401 纯文本 "unauthorized"
+/api/remote-agent/definitely-nope → 401 纯文本 "unauthorized"   ← 完全一样
+```
+
+**与"路径不存在"无法区分** —— 我一度判断为"路由注册成功但被围栏拦了"，
+方向完全错了。
+
+#### 推荐的形态：属性访问优先，非严格 get 兜底
+
+```js
+let webServer
+try {
+  webServer = ctx.webServer          // 已声明时走这条（能拿到）
+} catch {
+  /* 未声明 inject 时属性访问会抛 —— 走兜底 */
+}
+if (!webServer) {
+  webServer = typeof ctx.get === 'function' ? ctx.get('webServer', false) : undefined
+}
+if (!webServer || typeof webServer.register !== 'function') {
+  log('info', 'setup routes skipped: no webServer in this composition')
+  return disposers
+}
+```
+
+**注意 catch 的必要性**：未声明 inject 时属性访问**会抛**
+`cannot get property "X" without inject`（所以 `ctx?.foo` 也挡不住）。
+
+**自动化守卫**：`scripts/diag-inject.mjs` 会检查这个契约。
 
 ---
 
@@ -184,6 +240,68 @@ Node 24 下会把目录当模块入口，必然失败。用 `npm test`（内部�
 
 **断言失效时不要放宽它** —— 那等于删掉防线。要么改实现，要么改断言的
 **锚定方式**（从字面形态改到语义），并用注入验证新断言仍有判别力。
+
+---
+
+## 守卫的守卫：检查脚本自己坏掉时怎么办
+
+**这是本项目最贵的一课。** 漂移检查、CI workflow 这类"守卫"坏掉时**不会报错** ——
+它们**静默变成永远通过**，比没有守卫更危险（因为它给出虚假的安全感）。
+
+### 教训 1：守卫脚本崩溃 = 所有检查假绿
+
+`scripts/check-doc-drift.mjs` 的断言 65 曾写成：
+
+```js
+&& /run://s*npm run lint/.test(read('.github/workflows/ci.yml')),
+//        ^^ 反斜杠丢了：\s 变成 //s
+```
+
+于是正则字面量在 `run:` 处就结束，剩下的 `//s*npm run lint/...` 被当成**注释** ——
+整行变成 `... && /run:/ / s * npm ...`，**SyntaxError，脚本直接崩**。
+
+**后果比"断言失败"严重得多**：
+
+| | 断言失败 | 脚本崩溃 |
+|---|---|---|
+| exit 码 | 1 | 1（**一样**）|
+| 输出 | `FAIL [65] …` | **什么都没有** |
+| 自检用例 | 能断言"报出了 [65]" → 通过 | 只能断言"exit 1" → **假绿** |
+
+也就是说：**漂移检查整体静默失效，而它的自检还在报"通过"**。
+
+**修法（两层）**：
+1. 修那个正则（`/run:\s*npm run lint/`）
+2. **自检必须断言"报出具体编号"**，不能只断言 exit 码 ——
+   `test/doc-drift-selfcheck.test.js` 里每条用例都有
+   `assert.match(out, /\[NN\]/)`，正是为了挡这个形态
+
+### 教训 2：CI workflow 解析失败是静默的
+
+`.github/workflows/ci.yml` 的**顶部注释行丢了 `#` 前缀** → workflow 文件
+解析失败 → **lint job 根本没跑**，但 GitHub 只是把整个 workflow 标红，
+**每次 push 都看起来"有检查"**。
+
+**这类问题只能靠"检查这个检查器存在"来挡** —— 漂移断言 65 就是干这个的
+（断言 `eslint` 的 script + 配置文件 + **CI 里真的在跑它**三件套齐全）。
+
+### 写守卫时的三条规则
+
+1. **自检要断言"报出了什么"，不只是"退出码非零"**
+   ```js
+   assert.equal(code, 1)
+   assert.match(out, /\[65\]/)   // ← 这行才是关键
+   ```
+2. **注入验证必须能真的失败** —— 改完断言后用注入（删掉被守护的代码）
+   确认它**确实报错**。报不出来说明断言锚点错了。
+3. **检查器本身要能自检** —— `test/doc-drift-selfcheck.test.js` 在临时副本上
+   注入真实漂移，断言脚本必须检出。这是"守卫的守卫"。
+
+### 教训 3：诊断写文件会被清理掉，写 log 不会
+
+排查时加的临时诊断，若写成 `%TEMP%\xxx.log`，**清理脚本会把它删掉** ——
+下次遇到同样问题又要重加。**改成 `log()` 输出**：宿主日志里有痕迹，
+不会留垃圾文件，也不会在清理时丢失。
 
 ---
 

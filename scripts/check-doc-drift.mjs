@@ -704,6 +704,36 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     'lib/hub/pull-manager.js + lib/node/artifact-service.js + lib/node/index.js')
 }
 
+/* ── 68~70. 守卫的守卫（2026-10-16 加）──
+ *
+ * 检查脚本自己坏掉时**不会报错** —— 它们静默变成永远通过，比没有守卫更危险。
+ * 我们为此付出过代价：本文件的断言 65 曾因正则里 `\s` 写成 `//s` 而 SyntaxError，
+ * 整份检查 exit 1 但**没有任何 [NN] 输出**，于是自检里"必须报出 [65]"那条永远
+ * 失败、而**其他用例全部假绿**（它们只断言 exit 码）。
+ *
+ * 这三条锁住那次修复的成果：诊断脚本在、踩坑文档在、崩溃形态没有回来。
+ */
+{
+  const pkgGuard = JSON.parse(read('package.json'))
+  check('68', 'inject 契约诊断脚本存在且挂在 check 链上',
+    fs.existsSync(path.join(ROOT, 'scripts', 'diag-inject.mjs'))
+    && typeof pkgGuard.scripts?.['diag:inject'] === 'string'
+    && /diag:inject/.test(String(pkgGuard.scripts?.check ?? '')),
+    'scripts/diag-inject.mjs + package.json scripts.diag:inject + scripts.check')
+
+  check('69', '副机部署踩坑文档存在且在发布清单里',
+    fs.existsSync(path.join(ROOT, 'docs', 'worker-setup-pitfalls.md'))
+    && Array.isArray(pkgGuard.files)
+    && pkgGuard.files.includes('docs'),
+    'docs/worker-setup-pitfalls.md + package.json files 含 docs')
+
+  // 断言 65 的正则不得退回"反斜杠丢失"的形态（那会让整个脚本 SyntaxError）
+  const driftSelf = read('scripts/check-doc-drift.mjs')
+  check('70', '断言 65 的正则没有退回 /run://s*.../ 的崩溃形态',
+    /run:\\s\*npm run lint/.test(driftSelf),
+    'scripts/check-doc-drift.mjs 断言 65（`\\s` 必须带反斜杠，否则脚本崩）')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

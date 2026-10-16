@@ -84,7 +84,8 @@
     "check:docs": "node scripts/check-doc-drift.mjs",
     "check:packaging": "node scripts/check-packaging.mjs",
     "lint": "eslint .",
-    "check": "npm run check:packaging && npm run check:docs && npm test"
+    "check": "npm run check:packaging && npm run check:docs && npm run diag:inject && npm test",
+    "diag:inject": "node scripts/diag-inject.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
