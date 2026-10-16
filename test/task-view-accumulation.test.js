@@ -40,6 +40,8 @@ function stripComments(src) {
 }
 
 const registry = read('lib/hub/node-registry.js')
+// P1-4：applySync/applyView 已随帧摄入段拆到 registry-ingest.js，文本锚点跟着走
+const registryIngest = read('lib/hub/registry-ingest.js')
 const tools = read('lib/hub/tools.js')
 const ui = read('lib/hub/ui-routes.js')
 const client = read('lib/client.js')
@@ -96,7 +98,7 @@ test('createTask：错误信息要能区分"在跑的满了"与"历史多了"', 
 /* ─────────────── 2. 自动清理 ─────────────── */
 
 test('applySync：必须自动清理超过保留期的终态视图', () => {
-  const code = stripComments(registry)
+  const code = stripComments(registryIngest)
   const i = code.indexOf('applySync(')
   assert.ok(i >= 0, '应存在 applySync')
   const seg = code.slice(i, i + 6000)

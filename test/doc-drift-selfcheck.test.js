@@ -364,10 +364,11 @@ test('自检：lint script 被改动必须被检出', (t) => {
 
 // ── 资源遥测断言（66）的自检 ──
 test('自检：hub 删掉 node/resource 摄入分支必须被检出', (t) => {
+  // P1-4：帧摄入段（含 RESOURCE 分支）已拆到 registry-ingest.js，注入目标跟着走
   const { code, out } = probe(
     t,
     (src) => src.replace('case NODE_TO_HUB.RESOURCE:', 'case NODE_TO_HUB.RESOURCE_RENAMED:'),
-    'lib/hub/node-registry.js',
+    'lib/hub/registry-ingest.js',
   )
   assert.equal(code, 1, `删资源摄入分支应被检出（exit 1），实际 exit ${code}`)
   assert.match(out, /\[66\]/, '应报出 66')

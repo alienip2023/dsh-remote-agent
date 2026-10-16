@@ -362,6 +362,8 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
  */
 {
   const registry = read('lib/hub/node-registry.js')
+  // P1-4：applySync 已随帧摄入段拆到 registry-ingest.js，锚点跟着走
+  const registryIngest = read('lib/hub/registry-ingest.js')
   const hubToolsSrc = read('lib/hub/tools.js')
   const uiRoutesSrc = read('lib/hub/ui-routes.js')
   const clientSrc = read('lib/client.js')
@@ -376,8 +378,8 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
     'lib/hub/node-registry.js 的 createTask（曾经按 rec.tasks.size 算，导致自锁）')
 
   check('42', 'applySync 会主动清理超过保留期的终态视图',
-    /taskViewRetainMs/.test(registry) && /taskViewRetainMs/.test(hubIdx),
-    'lib/hub/node-registry.js 的 applySync + lib/hub/index.js 的 limits 默认值')
+    /taskViewRetainMs/.test(registryIngest) && /taskViewRetainMs/.test(hubIdx),
+    'lib/hub/registry-ingest.js 的 applySync + lib/hub/index.js 的 limits 默认值')
 
   check('43', '提供了立即清理的入口（工具 + UI 路由 + 面板按钮）',
     /name:\s*'remote_purge'/.test(hubToolsSrc)
@@ -669,14 +671,14 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
  */
 {
   const p66Protocol = read('lib/protocol.js')
-  const p66Registry = read('lib/hub/node-registry.js')
+  const p66Registry = read('lib/hub/registry-ingest.js')
   const p66Resource = read('lib/node/resource.js')
   check('66', '资源遥测链路：协议帧 + 副机采样器 + hub 摄入 + 投影透出都在',
     /RESOURCE:\s*'node\/resource'/.test(p66Protocol)
     && /case NODE_TO_HUB\.RESOURCE:/.test(p66Registry) && /rec\.resource = {/.test(p66Registry)
     && /createResourceSampler/.test(p66Resource) && /cpuPctBetween/.test(p66Resource)
     && /memTotalMb/.test(views) && /资源: CPU/.test(hubTools),
-    'lib/protocol.js + lib/hub/node-registry.js + lib/node/resource.js + views.js + tools.js')
+    'lib/protocol.js + lib/hub/registry-ingest.js + lib/node/resource.js + views.js + tools.js')
 }
 
 /* ── 67. 产物断点续传 ──

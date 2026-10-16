@@ -696,8 +696,8 @@ test('硬规则：输入带 __proto__ / constructor 键也不污染输出原型'
  *
  * 缺陷（本文件测出）：taskView 的 progressTail 是**唯一的裸透传**——
  * `t.progressTail.slice(-tail)`，元素原样出。而 progressTail 来自副机：
- *   - node-registry.js:776 applyView 把 task/sync 里的 view.progressTail 原样存下
- *   - node-registry.js:626 task/progress 帧自己构造 entry，但 task/sync 那条路不校验
+ *   - registry-ingest.js applyView 把 task/sync 里的 view.progressTail 原样存下
+ *   - registry-ingest.js task/progress 帧自己构造 entry，但 task/sync 那条路不校验
  * 两条消费方都直接解引用元素：
  *   - lib/hub/tools.js:384        `p.phase` / `p.detail`（remote_status 渲染）
  *   - lib/hub/subagent-provider.js:258 `p.phase` / `p.detail`（subagent 兜底文本）
@@ -773,7 +773,7 @@ test('[回归] progressTailView / progressItemView 直接契约', () => {
  *
  * 缺陷（本文件测出）：taskView 假设输入一定是"原始注册表对象"，而实际有两条
  * 路径把它叠加调用两次：
- *   ① registry.taskView(t)   —— node-registry.js:847 先调一次共享投影
+ *   ① registry.taskView(t)   —— node-registry.js taskView 先调一次共享投影
  *   ② UI 路由 /tasks         —— ui-routes.js:377 拿到①的结果再调一次 taskView
  * 第二次投影把第一次的成果丢掉（实测）：
  *   - summaryText：投影后原 `summary.text` 不存在了，只剩 `summaryText`，
@@ -818,7 +818,7 @@ test('[回归] taskView 幂等：对已投影对象再投影，结果不变', ()
 })
 
 test('[回归] taskView 幂等：复刻 registry + UI 路由的叠加调用（真实消费路径）', () => {
-  // registry.taskView（node-registry.js:847）先投影一次，再补两个自有字段
+  // registry.taskView（node-registry.js）先投影一次，再补两个自有字段
   const registryTaskView = (t) => ({
     ...taskView({ ...t, nodeOnline: true }, { tail: 6 }),
     accepted: t.accepted === true,
