@@ -31,6 +31,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { execSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -694,7 +695,27 @@ test('hub⇄worker e2e：remote_cancel 打断长任务并进入终态', async (t
   const cancelled = await env.tool('remote_cancel')({ taskId: accept.taskId })
   assert.equal(cancelled.requested, true)
 
-  await env.hub.registry.awaitTerminal(accept.taskId, { timeoutMs: 40000 })
+  try {
+    await env.hub.registry.awaitTerminal(accept.taskId, { timeoutMs: 40000 })
+  } catch (err) {
+    // ── 诊断转储（macos runner 首跑必挂、同机重跑秒过，2026-10-16 起 4/4）──
+    // 超时只有两种可能：kill 没杀掉（孤儿 sleep 持有 stdio → close 拖到 60s）
+    // 或 cancel 帧根本没到 worker。把两边现场都拍下来再抛。
+    let psDump = '(windows 无 ps)'
+    if (!IS_WIN) {
+      try {
+        psDump = execSync("ps -ef | grep -E 'sleep|sh -c' | grep -v grep || echo '(无相关进程)'", { encoding: 'utf8' })
+      } catch (e) {
+        psDump = `ps 失败: ${e.message}`
+      }
+    }
+    const view = env.hub.registry.getTask(accept.taskId)
+    throw new Error(
+      `awaitTerminal 超时。hub 视图: status=${view?.status} accepted=${view?.accepted} `
+      + `endedAt=${view?.endedAt ?? '无'}\n── 进程快照 ──\n${psDump}`,
+      { cause: err },
+    )
+  }
   const status = await env.tool('remote_status')({ taskId: accept.taskId })
   assert.ok(
     [TASK_STATUS.FAILED, TASK_STATUS.ABORTED, TASK_STATUS.INTERRUPTED].includes(status.status),
