@@ -536,6 +536,14 @@ $env:DSH_REMOTE_PWSH = 'C:\nope\pwsh.exe'
   `node-registry.js:1178` 起，工作区版在 `1228` 起），
   但引用时请改用可执行的用例名或补一条真实断言。
 
+  **【2026-10-16 更新】上条可维护性关注已解决（P1-4 拆分）**：`RelayLink` →
+  `lib/hub/relay-link.js`，日志器/小工具 → `lib/hub/hub-util.js`，帧摄入
+  （handleFrameFor/applySync 等）→ `lib/hub/registry-ingest.js`，接入/握手/hub
+  身份 → `lib/hub/registry-handshake.js`。`node-registry.js` 只剩核心注册表
+  （任务视图/下发/心跳/生命周期），约 640 行；拆分为纯代码搬移，对外形状
+  （`import { NodeRegistry } from './node-registry.js'`）不变。上文的行数数字
+  保留为**拆分前的历史记录**，不再反映现状。
+
 ### 7.3 一条审计过程中的自我纠正（方法论）
 
 审计时我先用关键词计数扫 `ws.test.js`，得出「分片/ping-pong/掩码/超长帧**均未覆盖**」

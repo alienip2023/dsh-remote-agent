@@ -11,6 +11,18 @@
 
 ## [未发布]
 
+### 工程：P1-4 拆分 node-registry.js（1465 行 → 四个职责文件）
+
+纯代码搬移，零行为改动，对外 `import { NodeRegistry, RelayLink, createPluginLogger } from './node-registry.js'` 的旧路径仍可用：
+
+- `relay-link.js` —— RelayLink（中继链路：重连/退避/节点目录），KNOWN-ISSUES 与 CHANGELOG 早已记着这条拆分建议
+- `hub-util.js` —— 插件日志器 + errText/numOr/safeDispose（单一真身，registry 与 relay-link 共享；numOr 曾因本地拷贝约束漏抄出 ReferenceError）
+- `registry-ingest.js` —— 上行帧处理与 task/sync 对账（mixin：`withIngest`）
+- `registry-handshake.js` —— direct/relay 接入、hello、hub 身份证明（mixin：`withHandshake`）
+- `node-registry.js` 只剩核心注册表（任务视图/下发/等待器/心跳/生命周期），约 640 行
+
+门禁锚点同步：doc-drift 断言 15c/42/62/66、自检变异目标、task-view-accumulation 文本断言均跟随新文件；KNOWN-ISSUES 该条已标注解决。
+
 ### 功能：产物断点续传
 
 `remote_pull` 拉大产物途中断线 / 超时，此前已收字节全部丢弃、重试从 0 重传。

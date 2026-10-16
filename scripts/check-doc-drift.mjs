@@ -205,7 +205,8 @@ check('15b', 'handoffView 移除了 logs 与 workspace 键',
  * 而它的旧注释（"只监听 close 会让死节点永远在线"）在冻结层修好后已经不成立，
  * 属误导性注释。这条断言保证：要么代码里没有它，要么文档必须同步说明为什么有。
  */
-const registrySrc = read('lib/hub/node-registry.js')
+// P1-4：attachDirect 已随接入/握手段拆到 registry-handshake.js，负向锚点跟着走
+const registrySrc = read('lib/hub/registry-handshake.js')
 const registryCode = stripComments(registrySrc)
 // ⚠ 正则形态踩过坑：第一版写 `conn\.socket\??\.on\??\(`，而 `\??` 是贪婪的 ——
 // 它会把 `socket?.on?.('end'` 里的 `?` 吃掉，剩下的 `?.on` 无法匹配紧跟的 `\.on`，
@@ -215,7 +216,7 @@ const registryCode = stripComments(registrySrc)
 const SOCKET_END_RE = /conn\.socket[^;\n]{0,24}\(\s*['"`]end['"`]/
 check('15c', 'hub 不再补 socket "end" 兜底（冻结层已统一处理）',
   !SOCKET_END_RE.test(registryCode),
-  'lib/hub/node-registry.js attachDirect（已剥注释）')
+  'lib/hub/registry-handshake.js attachDirect（已剥注释）')
 check('15d', 'KNOWN-ISSUES 第 2 节标记为已清理（与实现同步）',
   /##\s*2\.[^\n]*已清理/.test(known),
   'KNOWN-ISSUES.md 第 2 节标题')
@@ -597,7 +598,8 @@ check('49', '真实运行时自检脚本存在，KNOWN-ISSUES 第 8 节记录验
   const p2Identity = read('lib/identity.js')
   const p2Changelog = read('CHANGELOG.md')
   const p2Pairing = read('lib/pairing.js')
-  const p2Registry = read('lib/hub/node-registry.js')
+  // P1-4：sendIdentityFrame/buildIdentityPayload 已拆到 registry-handshake.js
+  const p2Registry = read('lib/hub/registry-handshake.js')
   const p2HubIdx = read('lib/hub/index.js')
   const p2NodeIdx = read('lib/node/index.js')
   const p2SetupBin = read('bin/dsh-remote-setup.js')
@@ -626,7 +628,7 @@ check('49', '真实运行时自检脚本存在，KNOWN-ISSUES 第 8 节记录验
     && /sendIdentityFrame/.test(p2Registry) && /buildIdentityPayload/.test(p2Registry)
     && /hubFingerprint/.test(p2Pairing)
     && /hubFingerprintForPairCode/.test(p2SetupBin),
-    'lib/hub/index.js + node-registry.js + lib/pairing.js + bin/dsh-remote-setup.js')
+    'lib/hub/index.js + registry-handshake.js + lib/pairing.js + bin/dsh-remote-setup.js')
 
   check('63', '代码锚点（副机侧）：验证链五环 / 宽限窗口 / TOFU 落盘 / 任务拦截都在',
     /verifyHubIdentity/.test(p2Transport) && /armIdentityGrace/.test(p2Transport)
