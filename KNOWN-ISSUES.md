@@ -591,10 +591,11 @@ node scripts/e2e-live-check.mjs --hub-url ws://<hub>:19387/api/remote-agent/node
 （状态机）与 roots 产物（sha256），自动判定。**这一步需要人的原因**：
 hub webserver 被 DSH 会话围栏保护（见上第 3 条），不是脚本缺陷。
 
-### 仍未覆盖（需要两台真机）
+### 已真机验证（2026-10-16）
 
-- **agent 模式全链路**：副机需要真实 DSH 提供的 agent 服务（ctx 里的
-  agentLoop）。本机 spawn 的 worker 拿不到该服务（selectRunner 走 headless），
-  agent 链路必须在两台都装了 DSH 的机器上验证。两处根因修复
-  （source 类型 20919b5、模型选择 367daef）目前只有进程内测试覆盖。
+- **agent 模式全链路 ✅**：两台都装了 DSH 的真机上验证通过。此前两处根因修复
+  （source 类型 20919b5、模型选择 367daef）从"仅进程内测试覆盖"升级为真机确认。
+
+### 仍未覆盖（需要真机环境）
+
 - **relay 模式真机**：进程内 e2e 已覆盖 happy path，跨 NAT 真机未验。
