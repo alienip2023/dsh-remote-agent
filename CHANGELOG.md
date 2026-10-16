@@ -11,6 +11,13 @@
 
 ## [未发布]
 
+### 功能：负载感知自动路由（提案 #14）
+
+`remote_task` 省略 `node` 时的行为变更：多节点在线**不再报错**，改为自动选
+——在跑任务数 → CPU → 内存占比 → nodeId 字典序逐级比较（逐级而非加权，
+确定可解释）；`mode:"agent"` 只考虑支持 agent 后端（agentMode）的节点。
+显式指定 `node` 的行为不变。新增 `NodeRegistry.pickAutoNode`，测试 10 条。
+
 ### 功能：hub 审计日志（提案 #19）
 
 hub 在 `<stateDir>/audit.jsonl` 记录派发 / 取消 / 拉取证据链
