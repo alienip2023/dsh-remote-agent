@@ -9,6 +9,18 @@
 
 ---
 
+## [未发布]
+
+### 功能：hub 审计日志（提案 #19）
+
+hub 在 `<stateDir>/audit.jsonl` 记录派发 / 取消 / 拉取证据链
+（`task.dispatch` / `task.cancel` / `pull.start` / `pull.end`）。
+字段统一打码截断（token 类键值写 `***`、超长 400 字符截断）；默认开启，
+8MB × 3 份轮转封顶；`config.audit: false` 显式关闭。写入失败只限频告警，
+绝不影响任务链路。新增 `lib/hub/audit-log.js`，测试 9 条。
+
+---
+
 ## [0.3.0] - 2026-10-16
 
 ### 工程：P1-4 拆分 node-registry.js（1465 行 → 四个职责文件）
