@@ -587,3 +587,35 @@ test('engine e2e：TaskStore 落盘后新实例能读回（任务状态真身在
   assert.ok(Array.isArray(rec.logs))
   assert.ok(rec.logs.length > 0, 'exec 任务应留下日志')
 })
+
+/* ══════════════════════════════════════════════════════════════════
+ * 输出行心跳（提案 #15）：有新行才发，stop() 干净收尾
+ * ══════════════════════════════════════════════════════════════════ */
+
+test('engine：outputHeartbeat 只在行数变化时发帧，stop 后静默', async (t) => {
+  const frames = []
+  const engine = { send: (type, data) => frames.push(data) }
+  let lines = 0
+  const stop = TaskEngine.prototype.outputHeartbeat.call(engine, 't-hb', () => lines)
+
+  await new Promise((r) => setTimeout(r, 2300))
+  // 0 行也是状态（"活着但还没吐"），首个 tick 发一次"已输出 0 行"
+  const first = frames.filter((f) => f.phase === 'output')
+  assert.equal(first.length, 1, `首 tick 应恰好 1 帧，实际 ${first.length}`)
+  assert.equal(first[0].detail, '已输出 0 行')
+
+  lines = 5
+  await new Promise((r) => setTimeout(r, 2300))
+  const five = frames.filter((f) => f.phase === 'output')
+  assert.equal(five.length, 2, '行数变化后应再发一帧')
+  assert.equal(five[1].detail, '已输出 5 行')
+
+  // 行数不变：不再发
+  await new Promise((r) => setTimeout(r, 2300))
+  assert.equal(frames.filter((f) => f.phase === 'output').length, 2, '行数不变不得重复发帧')
+
+  stop()
+  lines = 9
+  await new Promise((r) => setTimeout(r, 2300))
+  assert.equal(frames.filter((f) => f.phase === 'output').length, 2, 'stop 后必须静默')
+})
