@@ -1,5 +1,10 @@
 # dsh-remote-agent
 
+[![CI](https://github.com/zbzbhs/dsh-remote-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/zbzbhs/dsh-remote-agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Node](https://img.shields.io/badge/node-%E2%89%A522.19%20%7C%7C%20%3E%3D24-green)
+![dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen)
+
 [简体中文](README.md) | **English**
 
 Turn another computer into a **remote agent co-worker** for your DSH.
