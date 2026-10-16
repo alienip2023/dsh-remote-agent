@@ -428,6 +428,42 @@ test('hub⇄worker e2e（relay）：remote_task → accept → 完成 → handof
 })
 
 /* ══════════════════════════════════════════════════════════════════
+ * 用例 1.5：dry-run 预览（提案 #23）—— 预览即真实
+ * ══════════════════════════════════════════════════════════════════ */
+
+test('hub⇄worker e2e：remote_task dryRun 只出预览，不产生任务', async (t) => {
+  const root = tmpRoot(t)
+  const relay = await startRelay(t)
+  const env = await setup(t, { root, mode: 'relay', relay })
+
+  const preview = await env.tool('remote_task')({
+    node: env.nodeId,
+    goal: 'echo dry-run-probe',
+    mode: 'exec',
+    // workspace 省略：预览应回填节点默认工作区（与真实派发同一回填逻辑）
+    dryRun: true,
+  })
+
+  // 预览字段：真节点、真 workspace（roots[0] 回填）、真 mode
+  assert.equal(preview.dryRun, true)
+  assert.equal(preview.accepted, false)
+  assert.equal(preview.node, env.nodeId)
+  assert.equal(preview.mode, 'exec')
+  assert.equal(preview.workspace, env.wsRoot)
+  assert.ok(preview.hint.includes('dryRun'), 'hint 应提示如何正式派发')
+
+  // 关键负向断言：dry-run 绝不产生任务（hub 注册表里没有，节点也没收到）
+  assert.equal(env.hub.registry.tasks.size, 0, 'dry-run 不得在 hub 落库任何任务')
+
+  // 无效参数的 dry-run 报错与真实派发一致（goal 缺失）
+  await assert.rejects(
+    () => env.tool('remote_task')({ node: env.nodeId, mode: 'exec', dryRun: true }),
+    /invalid task: task-goal-missing/,
+  )
+  assert.equal(env.hub.registry.tasks.size, 0)
+})
+
+/* ══════════════════════════════════════════════════════════════════
  * 用例 2：direct 直连全链路 + 产物 pull 逐字节比对（验收标准）
  * ══════════════════════════════════════════════════════════════════ */
 
