@@ -1,5 +1,7 @@
 # dsh-remote-agent
 
+**简体中文** | [English](README.en.md)
+
 把另一台电脑变成你 DSH 的**远程 Agent 同事**。
 
 副机拥有自己的 DSH 与独立 Agent 循环，任务在它本地持久运行；主电脑只拿到
@@ -23,11 +25,22 @@
 
 | | |
 |---|---|
-| **状态** | 0.2.0 —— 主机侧端到端可用；副机 `exec` 可用，真实运行时拨入已实测（独立进程 worker → 正在运行的 DSH 桌面 hub，见 [KNOWN-ISSUES §8](KNOWN-ISSUES.md)）；`agent` 链路两个根因已修，待两台真机确认 |
+| **状态** | 0.3.0 —— 主机侧端到端可用；副机 `exec` 可用，真实运行时拨入已实测（独立进程 worker → 正在运行的 DSH 桌面 hub，见 [KNOWN-ISSUES §8](KNOWN-ISSUES.md)）；`agent` 链路两个根因已修，待两台真机确认 |
 | **DSH** | 桌面版 / CLI，0.2.0-rc.2 验证 |
 | **平台** | Windows（全量验证）· Linux / macOS（CI 覆盖）|
 | **依赖** | **零外部 npm 依赖** —— 只用 `node:` 内置模块 |
 | **Node** | `^22.19.0 \|\| >=24.0.0` |
+
+**Web 面板**（侧栏「远程同事」）：节点列表（含 CPU/内存徽章）、派发任务、
+任务状态、结果摘要、工作区变更、成品清单、日志尾巴。
+
+<p align="center">
+  <img src="docs/screenshots/panel-main.png" width="720" alt="Web 面板：节点、派发表单、任务列表">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/panel-task-detail.png" width="720" alt="任务详情：结果摘要、工作区变更、成品清单">
+</p>
 
 ---
 
@@ -94,7 +107,11 @@ node bin/dsh-remote-setup.js --doctor 你的配置.yml
 ### 主机（hub）
 
 ```bash
+# 通过 DSH 插件安装器（GitHub 源）
 dsh plugin add github:zbzbhs/dsh-remote-agent
+
+# 或通过 npm
+npm install -g dsh-remote-agent
 ```
 
 或在 DSH 的插件对话框里填 `github:zbzbhs/dsh-remote-agent`。
@@ -259,8 +276,8 @@ npm run check   # 打包自洽性 + 文档漂移 + 全部测试
 | 层 | 命令 | 内容 |
 |---|---|---|
 | 打包自洽 | `npm run check:packaging` | `files`/`exports`/`bin`/`dsh.bundle.patch` 指向的路径必须存在 |
-| 文档漂移 | `npm run check:docs` | 50 条断言，锁住文档与代码的关键约定 |
-| 行为测试 | `npm test` | 400 条 |
+| 文档漂移 | `npm run check:docs` | 102 条断言，锁住文档与代码的关键约定 |
+| 行为测试 | `npm test` | 652 条 |
 
 ---
 
