@@ -679,6 +679,27 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     'lib/protocol.js + lib/hub/node-registry.js + lib/node/resource.js + views.js + tools.js')
 }
 
+/* ── 67. 产物断点续传 ──
+ *
+ * 三段链缺一不可：hub 侧半成品晋升/续传探测（pull-manager）→ startOffset 下发
+ * → 副机中段续流（artifact-service）+ 帧入口接线（node/index）。
+ * 任何一段被拆掉，续传就静默退化成"每次全量重传"（无报错、无症状）。
+ */
+{
+  const p67Pull = read('lib/hub/pull-manager.js')
+  const p67Service = read('lib/node/artifact-service.js')
+  const p67Node = read('lib/node/index.js')
+  check('67', '产物断点续传：hub 半成品晋升 + startOffset 下发 + 副机中段续流都在',
+    /resumeKeyOf/.test(p67Pull)
+    && /promotePartial/.test(p67Pull)
+    && /prefixSha256/.test(p67Pull)
+    && /startOffset/.test(p67Pull)
+    && /createReadStream\(real, { start: startOffset/.test(p67Service)
+    && /beyond file size/.test(p67Service)
+    && /invalid startOffset/.test(p67Node),
+    'lib/hub/pull-manager.js + lib/node/artifact-service.js + lib/node/index.js')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

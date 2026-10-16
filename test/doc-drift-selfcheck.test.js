@@ -382,3 +382,26 @@ test('自检：CI 删掉 lint job 必须被检出', (t) => {
   assert.equal(code, 1, `CI 删 lint 步骤应被检出（exit 1），实际 exit ${code}`)
   assert.match(out, /\[65\]/, '应报出 65')
 })
+
+// ── 断点续传断言（67）的自检 ──
+test('自检：pull-manager 删掉半成品晋升必须被检出', (t) => {
+  // promotePartial（定义 + 调用）全改名 → 断言 67 的锚点消失
+  const { code, out } = probe(
+    t,
+    (src) => src.replaceAll('promotePartial', 'noopPromote'),
+    'lib/hub/pull-manager.js',
+  )
+  assert.equal(code, 1, `删晋升逻辑应被检出（exit 1），实际 exit ${code}`)
+  assert.match(out, /\[67\]/, '应报出 67')
+})
+
+test('自检：artifact-service 删掉中段续流必须被检出', (t) => {
+  // start: startOffset 退回从头流 → 断言 67 的副机锚点消失
+  const { code, out } = probe(
+    t,
+    (src) => src.replace(/createReadStream\(real, \{ start: startOffset, highWaterMark: ARTIFACT_CHUNK_BYTES \}\)/, 'createReadStream(real, { highWaterMark: ARTIFACT_CHUNK_BYTES })'),
+    'lib/node/artifact-service.js',
+  )
+  assert.equal(code, 1, `删中段续流应被检出（exit 1），实际 exit ${code}`)
+  assert.match(out, /\[67\]/, '应报出 67')
+})
