@@ -47,7 +47,7 @@ const KEYS = {
   artifactsView: ['counts', 'bytesFinal', 'final', 'intermediateCount', 'note'].sort(),
   exitView: ['code', 'timedOut', 'aborted', 'runner', 'toolCalls'].sort(),
   errorView: ['code', 'message'].sort(),
-  nodeView: ['nodeId', 'online', 'os', 'arch', 'agentMode', 'roots', 'caps', 'since', 'lastSeen', 'taskCount'].sort(),
+  nodeView: ['nodeId', 'online', 'os', 'arch', 'agentMode', 'roots', 'caps', 'since', 'lastSeen', 'taskCount', 'resource'].sort(),
   finalItemView: ['path', 'kind', 'bytes', 'sha256'].sort(),
   changedItemView: ['op', 'path', 'bytes', 'deltaBytes'].sort(),
   progressItemView: ['phase', 'detail', 'at'].sort(),

@@ -362,6 +362,17 @@ test('自检：lint script 被改动必须被检出', (t) => {
   assert.match(out, /\[65\]/, '应报出 65')
 })
 
+// ── 资源遥测断言（66）的自检 ──
+test('自检：hub 删掉 node/resource 摄入分支必须被检出', (t) => {
+  const { code, out } = probe(
+    t,
+    (src) => src.replace('case NODE_TO_HUB.RESOURCE:', 'case NODE_TO_HUB.RESOURCE_RENAMED:'),
+    'lib/hub/node-registry.js',
+  )
+  assert.equal(code, 1, `删资源摄入分支应被检出（exit 1），实际 exit ${code}`)
+  assert.match(out, /\[66\]/, '应报出 66')
+})
+
 test('自检：CI 删掉 lint job 必须被检出', (t) => {
   const { code, out } = probe(
     t,

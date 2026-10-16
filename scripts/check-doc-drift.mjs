@@ -662,6 +662,23 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
   && /run:\s*npm run lint/.test(read('.github/workflows/ci.yml')),
   'package.json scripts.lint + eslint.config.js + .github/workflows/ci.yml')
 
+/* ── 66. 资源遥测链路 ──
+ *
+ * node/resource 帧的整条链：协议常量 → 副机采样器 → hub 摄入 → 投影透出。
+ * 四个锚点缺一，遥测就静默断在半路（而遥测断了没有任何报错）。
+ */
+{
+  const p66Protocol = read('lib/protocol.js')
+  const p66Registry = read('lib/hub/node-registry.js')
+  const p66Resource = read('lib/node/resource.js')
+  check('66', '资源遥测链路：协议帧 + 副机采样器 + hub 摄入 + 投影透出都在',
+    /RESOURCE:\s*'node\/resource'/.test(p66Protocol)
+    && /case NODE_TO_HUB\.RESOURCE:/.test(p66Registry) && /rec\.resource = {/.test(p66Registry)
+    && /createResourceSampler/.test(p66Resource) && /cpuPctBetween/.test(p66Resource)
+    && /memTotalMb/.test(views) && /资源: CPU/.test(hubTools),
+    'lib/protocol.js + lib/hub/node-registry.js + lib/node/resource.js + views.js + tools.js')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

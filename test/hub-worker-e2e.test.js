@@ -229,7 +229,7 @@ function startRelay(t) {
  * @param {'relay'|'direct'} o.mode
  * @param {object} [o.relay] relay 句柄（relay 模式必填）
  */
-async function setup(t, { root, mode, relay }) {
+async function setup(t, { root, mode, relay, resourceIntervalMs }) {
   const wsRoot = path.join(root, 'ws')
   fs.mkdirSync(wsRoot, { recursive: true })
 
@@ -269,6 +269,8 @@ async function setup(t, { root, mode, relay }) {
     workerConfig.transportMode = 'direct'
     workerConfig.hubUrl = `ws://127.0.0.1:${port}/api/remote-agent/node`
   }
+  // 资源遥测间隔可注入（e2e 用 60ms 级别验证贯通；生产默认 30s）
+  if (Number.isFinite(resourceIntervalMs)) workerConfig.resourceIntervalMs = resourceIntervalMs
   const workerDispose = applyWorker(workerCtx, workerConfig)
 
   /**
@@ -730,6 +732,26 @@ test('hub⇄worker e2e：remote_cancel 打断长任务并进入终态', async (t
 /* ══════════════════════════════════════════════════════════════════
  * 用例 8：subagent provider 已注册（provider 层接线）
  * ══════════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════════════
+ * 用例 9：资源遥测贯通（node/resource → registry → remote_nodes）
+ * ══════════════════════════════════════════════════════════════════ */
+
+test('hub⇄worker e2e：资源遥测到 hub（60ms 间隔贯通全链路）', async (t) => {
+  const root = tmpRoot(t)
+  const relay = await startRelay(t)
+  const env = await setup(t, { root, mode: 'relay', relay, resourceIntervalMs: 60 })
+
+  await waitFor(() => {
+    const n = env.hub.registry.list().find((x) => x.nodeId === env.nodeId)
+    return n?.resource != null
+  }, { label: 'resource telemetry arrives', timeoutMs: 8000 })
+
+  const n = env.hub.registry.list().find((x) => x.nodeId === env.nodeId)
+  assert.ok(n.resource.memTotalMb > 0, '内存总量应为正数')
+  assert.ok(n.resource.memUsedMb >= 0, '内存用量应非负')
+  assert.ok(Number.isFinite(n.resource.at), '应有上报时间戳')
+})
 
 test('hub⇄worker e2e：remote-agent subagent provider 接线正确', async (t) => {
   const root = tmpRoot(t)

@@ -11,6 +11,12 @@
 
 ## [未发布]
 
+### 功能：副机资源遥测（CPU/内存/负载 上报到 hub）
+
+副机每 30s 采一次本机资源，经 `node/resource` 帧上报（`resourceIntervalMs` 可调，0 = 关）。CPU 用两次采样增量算利用率（`os.cpus()` 累计值直接读出来是开机平均，没有参考价值），首次采样无基线 → cpuPct 为 null。hub 侧存进节点记录，`remote_nodes` 与面板节点行透出；离线节点保留最后一份遥测（带 at 时间戳，消费方自行判断新鲜度）。
+
+尽力而为的遥测：字段缺失/类型不对就落 null，畸形帧不影响节点记录与任务链路。
+
 ### 修复：task/sync 自动清理分支 ReferenceError（eslint no-undef 首功）
 
 `applySync` 的自动清理分支用了 `lib/hub/index.js` 的私有 `numOr`，而
