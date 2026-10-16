@@ -37,10 +37,6 @@ function setup(t, nodes) {
   return registry
 }
 
-function onlineRecord(registry, nodeId) {
-  return registry.nodes.get(nodeId)
-}
-
 test('pickAutoNode：在跑任务数最少优先（第一级）', (t) => {
   const registry = setup(t, [
     { nodeId: 'busy', activeTasks: 2, resource: { cpuPct: 1 } },
