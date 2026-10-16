@@ -1,5 +1,6 @@
 /**
- * RelayLink 行为测试（hub 侧中继链路，lib/hub/node-registry.js 的 class）。
+ * RelayLink 行为测试（hub 侧中继链路，lib/hub/relay-link.js 的 class —— P1-4
+ * 自 node-registry.js 拆出）。
  *
  * ── 为什么单独测它 ────────────────────────────────────────────────
  * `relay-e2e.test.js` 测的是**中继服务端**（lib/relay.js）：token、路由、副本、
@@ -35,7 +36,7 @@ import {
   envelope,
 } from '../lib/protocol.js'
 import { createRelay, newRelayToken } from '../lib/relay.js'
-import { RelayLink } from '../lib/hub/node-registry.js'
+import { RelayLink } from '../lib/hub/relay-link.js'
 import { acceptUpgrade, connect } from '../lib/ws.js'
 
 const HUB_TOKEN = newRelayToken('rt')

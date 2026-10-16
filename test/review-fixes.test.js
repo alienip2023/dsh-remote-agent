@@ -45,8 +45,9 @@ test('transport.js：两种模式的 token header 名要分开（两端是不同
   assert.match(code, /headers\['x-relay-token'\]/, 'relay 用 x-relay-token（中继服务）')
 })
 
-test('node-registry.js：hub 连中继时 token 也不进 URL', () => {
-  const code = stripComments(read('lib/hub/node-registry.js'))
+test('relay-link.js：hub 连中继时 token 也不进 URL', () => {
+  // P1-4：RelayLink 已从 node-registry.js 拆到 relay-link.js，锚点跟着走
+  const code = stripComments(read('lib/hub/relay-link.js'))
   // RelayLink 里的 URL 构造
   const i = code.indexOf("target.searchParams.set('role', 'hub')")
   assert.ok(i >= 0, '应存在 hub 的 relay URL 构造')
