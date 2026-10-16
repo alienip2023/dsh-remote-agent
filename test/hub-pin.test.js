@@ -128,10 +128,16 @@ test('负向：假公钥（指纹与公钥不符）/ 坏签名 / 重放 nonce / 
   const hub = makeHub()
   const stranger = makeHub()
 
+  // 坏签名必须**确定性地坏**：base64 首字符若本来就是 'B'，replace(/^./, 'B')
+  // 是空操作 → 签名根本没坏 → 验证通过 → 用例假挂（1/64 概率，全量跑时踩中过）。
+  // 所以取真实签名的首字符，替换成一个保证不同的字符。
+  const good = hub.frame()
+  const badSig = (good.sig[0] === 'B' ? 'C' : 'B') + good.sig.slice(1)
+
   const cases = [
     ['指纹与公钥不符', hub.frame({ pubOverride: stranger.id.publicKeyB64 })],
     ['报真指纹递假钥匙', hub.frame({ fpOverride: stranger.id.fingerprint })],
-    ['签名坏', { ...hub.frame(), sig: hub.frame().sig.replace(/^./, 'B') }],
+    ['签名坏', { ...good, sig: badSig }],
   ]
   for (const [name, frame] of cases) {
     const { t } = makeTransport({})
