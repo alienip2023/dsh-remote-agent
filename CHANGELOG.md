@@ -11,6 +11,30 @@
 
 ## [未发布]
 
+### 功能：任务变更 diff 视图（提案 #21）
+
+任务收尾时副机为工作区里 add/modify/delete 的**文本文件**生成 unified diff，
+随 handoff 上报 —— 远程场景下没法随手 `git diff`，这张卡就是"到底改了什么"
+的证据链。零依赖（不 spawn git、不引 npm 包）：公共前后缀修剪 + DP LCS，
+中段超 600 行不硬算（统计式降级，宁可粗也不 O(n²) 爆内存）。
+
+边界刻意收窄：前像在任务开始时快照捕获（≤256KB/文件、64 文件、总量 4MB、
+二进制不捕获，超限文件的 diff 缺席但 changed 元数据仍在）；输出封顶
+12 文件 / 单文件 16KB / 总量 96KB。消费路径：`remote_handoff` 卡片直接带
+diff 文本（`## 变更 diff` 段），面板任务详情新增「变更 diff」块（先展示
+6 块）。安全披露见 SECURITY.md 新节 —— diff 是**文件内容**，不再只是元数据；
+`denyPaths` 对快照与 diff 同样生效。测试：diff 单测 10 条 + engine e2e 3 条
++ views 投影 3 条。
+
+### 功能：exec 输出行心跳（提案 #15）
+
+`mode:"exec"` 的长任务此前 running 期间没有任何进度帧（只有 started 与
+结束帧），面板与 remote_status 都"看起来卡死"。现在 exec 运行期每 2 秒
+发一条 `task/progress`（`phase:"output"`），**只在 stdout/stderr 行数有变化
+时发**（静止时不刷屏），面板「进行步骤」尾部展示 8 条。只对 exec 做 ——
+agent 模式的工具事件本身就是步骤流，避免刷爆 20 条 progressTail。
+e2e 1 条（首帧必发、行数不变不发、stop 后静默）。
+
 ### 修复：真机验证揪出的四项（docs/verification-repos-routing-real.md）
 
 - **审计值级打码**：此前打码只看键名，任务书正文里内嵌的凭证

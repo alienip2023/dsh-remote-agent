@@ -35,7 +35,7 @@ explicitly pull them.
 
 **Web panel**（sidebar → "远程同事" / Remote co-worker）：node list with CPU /
 memory badges, task dispatch, task states, result summaries, workspace changes,
-final artifacts, log tail.
+change diffs (unified diffs of text-file edits), final artifacts, log tail.
 
 <p align="center">
   <img src="docs/screenshots/panel-main.png" width="720" alt="Web panel: nodes, dispatch form, task list">
@@ -228,7 +228,7 @@ Once installed you **don't need to memorize commands** — just talk:
 
 There is also a Web panel (sidebar → "远程同事"): node list (with CPU / memory
 / load badges), task dispatch, task states, result summaries, workspace
-changes, final artifacts, log tail.
+changes, change diffs, final artifacts, log tail.
 
 ### Tool reference
 

@@ -23,6 +23,8 @@ import {
   artifactsView,
   changedItemView,
   changedView,
+  diffItemView,
+  diffsView,
   errorView,
   exitView,
   finalItemView,
@@ -40,7 +42,8 @@ import {
 
 /** 声明的键集合（排序后比较）。加字段/加 spread 都会让这些断言失败。 */
 const KEYS = {
-  handoffView: ['taskId', 'nodeId', 'status', 'mode', 'runner', 'durationMs', 'startedAt', 'endedAt', 'exit', 'summary', 'summaryText', 'changed', 'artifacts', 'pullHint'].sort(),
+  // diffs：提案 #21 变更 diff 视图（与 changed 平级的第三块内容）
+  handoffView: ['taskId', 'nodeId', 'status', 'mode', 'runner', 'durationMs', 'startedAt', 'endedAt', 'exit', 'summary', 'summaryText', 'changed', 'diffs', 'artifacts', 'pullHint'].sort(),
   // approval：提案 #2 两阶段审批（'manual' | 'auto'）
   taskView: ['taskId', 'nodeId', 'nodeOnline', 'status', 'mode', 'approval', 'goal', 'createdAt', 'updatedAt', 'startedAt', 'endedAt', 'durationMs', 'exit', 'error', 'summaryText', 'changedCount', 'changed', 'manifestCounts', 'progressTail', 'logTail'].sort(),
   taskViewNoLogs: ['taskId', 'nodeId', 'nodeOnline', 'status', 'mode', 'approval', 'goal', 'createdAt', 'updatedAt', 'startedAt', 'endedAt', 'durationMs', 'exit', 'error', 'summaryText', 'changedCount', 'changed', 'manifestCounts'].sort(),
@@ -106,6 +109,8 @@ function hostileHandoff() {
     exit: { code: 0, timedOut: false, runner: 'claude', toolCalls: 2, SECRET_EXIT_KEY: `${LEAK}_exit`, stderr: `${LEAK}_STDERR` },
     error: { code: 'boom', message: 'diag', SECRET_ERROR_KEY: `${LEAK}_error`, stack: `${LEAK}_STACK` },
     changed: [{ op: 'add', path: 'a.txt', bytes: 1, deltaBytes: 1, SECRET_CHANGED_KEY: `${LEAK}_changed` }],
+    // diffs（提案 #21）：投影后只留 path/diff/truncated，长度封顶
+    diffs: [{ path: 'a.txt', diff: '--- a/a.txt\n', truncated: false, SECRET_DIFFS_KEY: `${LEAK}_diffs`, absPath: `D:\\${LEAK}\\host\\ws\\a.txt` }],
     artifacts: {
       counts: { total: 1, final: 1, intermediate: 0, other: 0, SECRET_COUNTS_KEY: `${LEAK}_counts` },
       bytesFinal: 1,
@@ -156,7 +161,7 @@ function hostileTask() {
 const FORBIDDEN_KEYS = [
   'workspace', 'logs', 'sessionId', 'goal', 'stderr', 'stack',
   'SECRET_TOP_KEY', 'SECRET_ANY_KEY_2', 'SECRET_SUMMARY_KEY', 'SECRET_EXIT_KEY',
-  'SECRET_ERROR_KEY', 'SECRET_CHANGED_KEY', 'SECRET_COUNTS_KEY', 'SECRET_FINAL_KEY',
+  'SECRET_ERROR_KEY', 'SECRET_CHANGED_KEY', 'SECRET_DIFFS_KEY', 'SECRET_COUNTS_KEY', 'SECRET_FINAL_KEY',
   'SECRET_ARTIFACTS_KEY', 'source',
 ]
 
@@ -196,6 +201,11 @@ test('敌意 handoff：逐键断言（顶层 + 每个嵌套层）', () => {
   assert.equal(out.status, 'completed')
   assert.equal(out.exit.code, 0)
   assert.equal(out.changed[0].path, 'a.txt')
+  // diffs：合法字段被投影（证明 diffs 路径不是"整段消失"式的假通过）
+  assert.equal(out.diffs.length, 1)
+  assert.equal(out.diffs[0].path, 'a.txt')
+  assert.equal(out.diffs[0].diff, '--- a/a.txt\n')
+  assert.equal(out.diffs[0].truncated, false)
   assert.equal(out.artifacts.final[0].path, 'a.txt')
 })
 
@@ -423,6 +433,7 @@ test('边界：数组当对象喂进来也不抛（typeof [] === "object"），�
     summary: null,
     summaryText: '',
     changed: [],
+    diffs: [],
     artifacts: null,
     pullHint: '',
   })
@@ -592,6 +603,45 @@ test('数组上限：changed 截到 50，final 截到 200（默认值 + 调用�
   // 正好等于上限时不动它
   assert.equal(changedView(many.slice(0, 50)).length, 50)
   assert.equal(manifestView({ items: finals.slice(0, 200) }).final.length, 200)
+})
+
+test('数组上限：diffs 截到 12（与副机 buildDiffs 上限同口径），handoffView 硬编码一致', () => {
+  const many = Array.from({ length: 20 }, (_, i) => ({ path: `f${i}.txt`, diff: `x${i}`, truncated: false }))
+  assert.equal(diffsView(many).length, 12, 'diffsView 默认 max=12')
+  assert.equal(handoffView({ diffs: many }).diffs.length, 12, 'handoffView 里硬编码的就是 12')
+  assert.equal(diffsView(many.slice(0, 12)).length, 12, '正好等于上限时不动')
+  assert.deepEqual(diffsView(many, { max: 2 }).map((d) => d.path), ['f0.txt', 'f1.txt'])
+  assert.equal(diffsView(null).length, 0)
+  assert.equal(diffsView('nope').length, 0)
+})
+
+test('diffItemView：path/diff 双非空门槛 + 长度封顶（path 500 / diff 16KB）', () => {
+  // 缺 path 或 diff 的条目直接丢弃
+  assert.equal(diffItemView({ path: 'a.txt', diff: '' }), null)
+  assert.equal(diffItemView({ path: '', diff: 'x' }), null)
+  assert.equal(diffItemView({ path: 'a.txt' }), null)
+  assert.equal(diffItemView({ diff: 'x' }), null)
+  assert.equal(diffItemView(null), null)
+  assert.equal(diffItemView(42), null)
+
+  // 长度封顶：path 截 500，diff 截 16KB，truncated 非真归 false
+  const d = diffItemView({
+    path: 'p'.repeat(900),
+    diff: 'd'.repeat(20 * 1024),
+    truncated: 'yes',
+    SECRET_KEY: 'LEAKSENTINEL_diffs',
+  })
+  assert.equal(d.path.length, 500)
+  assert.equal(d.diff.length, 16 * 1024)
+  assert.equal(d.truncated, false)
+  assert.deepEqual(Object.keys(d).sort(), ['diff', 'path', 'truncated'], '逐字段构造，塞进来的任意键不得带出')
+})
+
+test('handoffView：diffs 是数组才投影，类型错归空数组（不抛）', () => {
+  assert.deepEqual(handoffView({ diffs: 'nope' }).diffs, [])
+  assert.deepEqual(handoffView({ diffs: 42 }).diffs, [])
+  assert.deepEqual(handoffView({ diffs: [null, 3, { path: 'a.txt', diff: 'x' }] }).diffs,
+    [{ path: 'a.txt', diff: 'x', truncated: false }], '非对象/缺字段元素被过滤')
 })
 
 test('数组上限：max 选项生效，且截断保留的是**前** max 条', () => {

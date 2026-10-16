@@ -25,7 +25,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { ArtifactService } from '../lib/node/artifact-service.js'
-import { TaskEngine } from '../lib/node/task-engine.js'
+import { TaskEngine, buildDiffs } from '../lib/node/task-engine.js'
 import { TaskStore } from '../lib/node/task-store.js'
 import { authorizePull } from '../lib/artifacts.js'
 import { ARTIFACT_ROLE, TASK_STATUS, validateTaskStart } from '../lib/protocol.js'
@@ -618,4 +618,80 @@ test('engine：outputHeartbeat 只在行数变化时发帧，stop 后静默', as
   lines = 9
   await new Promise((r) => setTimeout(r, 2300))
   assert.equal(frames.filter((f) => f.phase === 'output').length, 2, 'stop 后必须静默')
+})
+
+/* ══════════════════════════════════════════════════════════════════
+ * 变更 diff 视图（提案 #21）：handoff 带 diffs，二进制/超大缺席
+ * ══════════════════════════════════════════════════════════════════ */
+
+test('engine e2e：modify 文件 → handoff.diffs 带 -旧/+新 unified diff', async (t) => {
+  const root = tmpRoot(t)
+  const { engine, frames, workspace } = makeEngine(t, { root })
+
+  // 前像先落盘（快照在 accept 时捕获），任务把它改成别的内容
+  fs.writeFileSync(path.join(workspace, 'note.txt'), 'before line\n', 'utf8')
+  const goal = writeFileCmd('note.txt', 'after line')
+  dispatchExec(engine, { goal, taskId: 't-diff-1', workspace })
+
+  const summary = await waitFrame(frames, 'task/summary', (d) => d.taskId === 't-diff-1', { label: 'task/summary(t-diff-1)' })
+  const handoff = summary.data.handoff
+  assert.ok(handoff, 'handoff 必须存在')
+  assert.ok(Array.isArray(handoff.diffs), 'handoff.diffs 必须是数组')
+  const d = handoff.diffs.find((x) => x && x.path === 'note.txt')
+  assert.ok(d, `diffs 应含 note.txt，实际：${JSON.stringify(handoff.diffs)}`)
+  assert.equal(d.truncated, false)
+  assert.match(d.diff, /^--- a\/note\.txt\n/)
+  // Windows PowerShell Set-Content -Encoding UTF8 会写 BOM（U+FEFF），兼容之
+  assert.match(d.diff, /-before line/)
+  assert.match(d.diff, /\+\uFEFF?after line/)
+})
+
+test('engine e2e：add 文件也出 diff（对照第一用例的 changed 路径）', async (t) => {
+  const root = tmpRoot(t)
+  const { engine, frames, workspace } = makeEngine(t, { root })
+
+  const goal = writeFileCmd('brand-new.txt', 'created by task')
+  dispatchExec(engine, { goal, taskId: 't-diff-2', workspace })
+
+  const summary = await waitFrame(frames, 'task/summary', (d) => d.taskId === 't-diff-2', { label: 'task/summary(t-diff-2)' })
+  const d = summary.data.handoff.diffs.find((x) => x && x.path === 'brand-new.txt')
+  assert.ok(d, '新增文件应有 diff')
+  assert.match(d.diff, /\+\uFEFF?created by task/)
+})
+
+test('engine：buildDiffs 二进制/前像缺席的文件跳过，12 文件封顶', async (t) => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-bd-'))
+  t.after(() => {
+    try { fs.rmSync(workspace, { recursive: true, force: true, maxRetries: 3 }) } catch { /* 忽略 */ }
+  })
+
+  // modify：前像缺席（模拟二进制/超大 —— 快照没存 content）→ 跳过
+  fs.writeFileSync(path.join(workspace, 'bin.dat'), 'x', 'utf8')
+  const before = new Map([
+    ['bin.dat', { bytes: 1, mtimeMs: 1 }], // 无 content
+  ])
+  const changed = [{ path: 'bin.dat', op: 'modify' }]
+  let diffs = buildDiffs({ workspace, changed, before })
+  assert.deepEqual(diffs, [], '前像无 content 的 modify 必须跳过')
+
+  // modify：前像有 content、后像在磁盘 → 正常出 diff
+  fs.writeFileSync(path.join(workspace, 'a.txt'), 'v2\n', 'utf8')
+  const before2 = new Map([
+    ['a.txt', { bytes: 3, mtimeMs: 1, content: 'v1\n' }],
+  ])
+  diffs = buildDiffs({ workspace, changed: [{ path: 'a.txt', op: 'modify' }], before: before2 })
+  assert.equal(diffs.length, 1)
+  assert.match(diffs[0].diff, /-v1\n\+v2\n/)
+
+  // delete：前像有 content → 纯删 diff；磁盘上文件已不在
+  fs.rmSync(path.join(workspace, 'a.txt'))
+  diffs = buildDiffs({ workspace, changed: [{ path: 'a.txt', op: 'delete' }], before: before2 })
+  assert.equal(diffs.length, 1)
+  assert.match(diffs[0].diff, /-v1\n/)
+
+  // 封顶：changed 超过 12 个只出 12 份
+  const many = Array.from({ length: 15 }, (_, i) => `f${i}.txt`)
+  const before3 = new Map(many.map((p) => [p, { bytes: 1, mtimeMs: 1, content: 'x\n' }]))
+  diffs = buildDiffs({ workspace, changed: many.map((p) => ({ path: p, op: 'delete' })), before: before3 })
+  assert.equal(diffs.length, 12, `应封顶 12，实际 ${diffs.length}`)
 })
