@@ -327,7 +327,10 @@ function nodeManifest(relPath = 'a.txt', bytes = FULL.length) {
 }
 
 async function nodePull(t, fileBody, startOffset, opts = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-resume-node-'))
+  // realpath：Windows 上 os.tmpdir() 可能是 8.3 短名（CI 实锤），工作区白名单
+  // 比较需要规范形式 —— 与 engine-e2e.test.js 同一规避手法。
+  const dirRaw = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-resume-node-'))
+  const dir = fs.realpathSync.native ? fs.realpathSync.native(dirRaw) : dirRaw
   const ws = path.join(dir, 'ws')
   fs.mkdirSync(ws)
   fs.writeFileSync(path.join(ws, 'a.txt'), fileBody)
