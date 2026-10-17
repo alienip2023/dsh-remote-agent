@@ -25,7 +25,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { ArtifactService } from '../lib/node/artifact-service.js'
-import { TaskEngine, buildDiffs } from '../lib/node/task-engine.js'
+import { AGENT_DEFAULT_TIMEOUT_MS, EXEC_DEFAULT_TIMEOUT_MS, TaskEngine, buildDiffs } from '../lib/node/task-engine.js'
 import { TaskStore } from '../lib/node/task-store.js'
 import { authorizePull } from '../lib/artifacts.js'
 import { ARTIFACT_ROLE, TASK_STATUS, validateTaskStart } from '../lib/protocol.js'
@@ -694,4 +694,75 @@ test('engine：buildDiffs 二进制/前像缺席的文件跳过，12 文件封�
   const before3 = new Map(many.map((p) => [p, { bytes: 1, mtimeMs: 1, content: 'x\n' }]))
   diffs = buildDiffs({ workspace, changed: many.map((p) => ({ path: p, op: 'delete' })), before: before3 })
   assert.equal(diffs.length, 12, `应封顶 12，实际 ${diffs.length}`)
+})
+
+/* ══════════════════════════════════════════════════════════════════
+ * 提案 #26：队列堵死防线 —— 分开超时常量、maxConcurrent 默认、queueStats
+ * ══════════════════════════════════════════════════════════════════ */
+
+test('#26-1 默认超时常量：exec 10 分钟 / agent 1 小时，引擎兜底与工具层同源', () => {
+  assert.equal(EXEC_DEFAULT_TIMEOUT_MS, 10 * 60 * 1000)
+  assert.equal(AGENT_DEFAULT_TIMEOUT_MS, 60 * 60 * 1000)
+  // 兜底必须引用常量而不是字面量 —— 否则"工具说 10 分钟、副机兜底 1 小时"
+  // 的分裂会在有人改其一而不改其二时复发（#26 事故形态之一）。
+  const src = fs.readFileSync(new URL('../lib/node/task-engine.js', import.meta.url), 'utf8')
+  assert.match(src, /rec\.constraints\?\.timeoutMs \?\? EXEC_DEFAULT_TIMEOUT_MS/, 'runExec 兜底应引用 EXEC_DEFAULT_TIMEOUT_MS')
+  assert.match(src, /rec\.constraints\?\.timeoutMs \?\? AGENT_DEFAULT_TIMEOUT_MS/, 'runAgent 兜底应引用 AGENT_DEFAULT_TIMEOUT_MS')
+})
+
+test('#26-2 maxConcurrent 默认 4（显式配置仍然生效）', () => {
+  const bare = ({ maxConcurrent } = {}) => new TaskEngine({
+    store: { get: () => undefined, list: () => [] },
+    artifacts: {},
+    runner: { kind: 'fake' },
+    nodeId: 'n',
+    roots: [],
+    defaultWorkspace: '',
+    send: () => {},
+    ...(maxConcurrent !== undefined ? { maxConcurrent } : {}),
+  })
+  assert.equal(bare().maxConcurrent, 4, '不传 maxConcurrent 时默认应为 4')
+  assert.equal(bare({ maxConcurrent: 2 }).maxConcurrent, 2, '显式配置必须原样生效')
+})
+
+test('#26-3 queueStats：排队/并发/最久等待与 starved 判定', () => {
+  const store = new Map()
+  const engine = new TaskEngine({
+    store: { get: (id) => store.get(id), list: () => [...store.values()] },
+    artifacts: {},
+    runner: { kind: 'fake' },
+    nodeId: 'n',
+    roots: [],
+    defaultWorkspace: '',
+    send: () => {},
+  })
+  const now = Date.now()
+
+  // 空队列：全零、不饿
+  assert.deepEqual(engine.queueStats(now), {
+    queued: 0, running: 0, maxConcurrent: 4, oldestQueuedMs: 0, starved: false,
+  })
+
+  // 两条排队（一条 3 分钟前、一条 1 分钟前）+ 并发未占满 → 不饿
+  store.set('a', { createdAt: now - 3 * 60 * 1000 })
+  store.set('b', { createdAt: now - 1 * 60 * 1000 })
+  engine.queue = ['a', 'b']
+  let s = engine.queueStats(now)
+  assert.equal(s.queued, 2)
+  assert.equal(s.oldestQueuedMs, 3 * 60 * 1000, '最久等待取最早的 createdAt')
+  assert.equal(s.starved, false, '并发未占满不判饿')
+
+  // 并发占满 + 排队超阈值 → starved
+  engine.running.set('x', { controller: {}, startedAt: now })
+  s = engine.queueStats(now)
+  assert.equal(s.running, 1)
+  assert.equal(s.maxConcurrent, 4)
+  assert.equal(s.starved, false, 'running(1) < maxConcurrent(4) 时即使排了 3 分钟也不算堵死')
+  engine.running.set('y', {})
+  engine.running.set('z', {})
+  engine.running.set('w', {})
+  s = engine.queueStats(now)
+  assert.equal(s.starved, true, '并发占满 + 排队 3 分钟 > 2 分钟阈值 → 堵死')
+  s = engine.queueStats(now - 90 * 1000)
+  assert.equal(s.starved, false, '阈值边缘（< 2 分钟）不判饿')
 })

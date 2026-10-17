@@ -9,6 +9,43 @@
 
 ---
 
+## [0.6.0] - 2026-10-17
+
+### 修复：单条慢命令锁死整台副机（提案 #26，实测事故防线）
+
+实测事故：两条慢 exec 占满 `maxConcurrent=2` 后，后续任务**全部 queued 且一条
+都不执行**；重启副机后重派同样命令再次锁死。根因是 `maxConcurrent=2` 与
+exec 默认超时 1 小时的组合 —— 一条卡住的命令 = 整台副机一小时不可用。
+
+**行为变更（默认值）**：
+
+- **exec / agent 默认超时分开**：exec 10 分钟（绝大多数命令 1 分钟内结束，
+  10 分钟足够暴露"命令本身有问题"）、agent 保持 1 小时。工具层与副机兜底
+  **同源常量**（`task-engine.js` 导出，`tools.js` 直接 import），显式
+  `timeoutMs` 仍然优先。
+- **maxConcurrent 默认 2 → 4**：2 太脆 —— 两条慢任务就能锁死整台机器；
+  4 让"两条慢 + 两条快"正常共存。配置项保留，按内存调整。
+
+**可见性：队列健康遥测（#26-3）**：
+
+- 副机 `TaskEngine.queueStats()` 每 30s 随资源遥测帧搭车上报：
+  `{queued, running, maxConcurrent, oldestQueuedMs, starved}`。
+  `starved` = 有排队 + 并发占满 + 最久排队超 2 分钟。
+- `remote_nodes` 透出 `queue` 字段；starved 节点渲染 ⚠ 堵死告警并给出
+  下一步动作（remote_status 逐条查 / remote_cancel 释放并发槽）——
+  用户不再只知道"卡了"，还知道"卡在哪、等多久、怎么办"。
+- 旧副机不上报 queue（向后兼容），remote_nodes 相应行缺席。
+
+**如实说明**：exec 的取消链路核查结论是**真杀进程树**（Windows
+`taskkill /T /F`、POSIX `kill(-pgid)`，abort → killTree 已实装）——
+"remote_cancel 无效"的残余风险在 agent 会话卡在不检查 signal 的 await
+与快照同步扫描（`snapshotWorkspace`），留待 #26 后续批次。
+
+测试：引擎侧 3 条（常量同源文本断言 / maxConcurrent 默认 / queueStats 判定
+矩阵）+ e2e 资源遥测用例扩展（queue 贯通 + starved 渲染）。全量 825 tests。
+
+---
+
 ## [0.5.0] - 2026-10-17
 
 ### 功能：远程文件工具集（提案 #25）

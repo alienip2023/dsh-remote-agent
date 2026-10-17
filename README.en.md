@@ -244,6 +244,16 @@ There is also a Web panel (sidebar → "远程同事"): node list (with CPU / me
 / load badges), task dispatch, task states, result summaries, workspace
 changes, change diffs, final artifacts, log tail.
 
+> **Queue starvation has an alarm** (defense added after a real incident on
+> 2026-10-17): every 30s the worker reports queue health along with resource
+> telemetry (queued / running / longest wait). When "tasks are queued AND all
+> concurrency slots are busy AND the oldest has waited over 2 minutes",
+> `remote_nodes` shows a ⚠ starvation warning on that node with the suggested
+> next step (remote_status to inspect, remote_cancel to free a slot). The
+> default concurrency is raised 2 → 4 and the default exec timeout tightened
+> from 1 hour to 10 minutes — a single slow command can no longer easily lock
+> up the whole worker.
+
 ### Tool reference
 
 <details>
@@ -260,7 +270,7 @@ changes, change diffs, final artifacts, log tail.
 | `mode` | `agent` (worker starts an independent agent session, default) / `exec` (run a command directly) |
 | `model` | Optional. Model the worker should use (`mode=agent` only): `{model:"deepseek-chat"}` or `{provider:"openai",model:"gpt-4o"}`. Selection only, no credentials —— the worker runs it with its own provider config; unsupported on headless backends |
 | `outputs` | Glob of expected outputs (relative to the workspace), used to filter the artifact manifest |
-| `timeoutMs` | Worker-side timeout, 1 hour by default |
+| `timeoutMs` | Worker-side timeout. Defaults by mode: **exec 10 minutes, agent 1 hour** (one slow exec should not pin the worker for an hour) |
 | `denyPaths` | Extra absolute paths to deny |
 | `artifactRules` | Override built-in artifact role classification, e.g. `{ intermediate: ["build/**"] }` |
 

@@ -261,7 +261,8 @@ async function setup(t, { root, mode, relay, resourceIntervalMs }) {
     nodeId: 'test-worker',
     stateDir: path.join(root, 'worker-state'),
     roots: [wsRoot],
-    maxConcurrent: 2,
+    // maxConcurrent 不传 —— 走生产默认（提案 #26-2 起为 4），让 e2e 与
+    // 真实装配一致（资源遥测用例钉住这个默认值）。
     resumeQueued: false,
   }
   if (mode === 'relay') {
@@ -825,6 +826,28 @@ test('hub⇄worker e2e：资源遥测到 hub（60ms 间隔贯通全链路）', a
   assert.ok(n.resource.memTotalMb > 0, '内存总量应为正数')
   assert.ok(n.resource.memUsedMb >= 0, '内存用量应非负')
   assert.ok(Number.isFinite(n.resource.at), '应有上报时间戳')
+
+  // 提案 #26-3：队列健康快照随资源帧搭车贯通。maxConcurrent===4 同时钉住
+  // #26-2 的新默认值（本用例的 workerConfig 未传 maxConcurrent）。
+  assert.ok(n.queue, '资源帧应携带 queue 快照（新副机）')
+  assert.equal(n.queue.maxConcurrent, 4, 'maxConcurrent 默认应为 4')
+  assert.equal(typeof n.queue.queued, 'number')
+  assert.equal(typeof n.queue.running, 'number')
+  assert.ok(n.queue.oldestQueuedMs >= 0)
+  assert.equal(n.queue.starved, false, '空闲节点不判饿')
+
+  // remote_nodes 渲染：starved 强信号必须可见（#26 事故形态的核心修法——
+  // 用户不再只知道"卡了"，还知道"卡在哪、等多久、怎么办"）
+  const nodesDef = env.tools.get('remote_nodes')
+  const starvedRender = nodesDef.output.render({}, {
+    nodes: [{ nodeId: 'n1', online: true, queue: { queued: 3, running: 4, maxConcurrent: 4, oldestQueuedMs: 180000, starved: true } }],
+  })
+  assert.match(starvedRender[0].text, /堵死/, 'starved 节点应渲染堵死告警')
+  assert.match(starvedRender[0].text, /remote_cancel/, '告警应给出下一步动作')
+  const quietRender = nodesDef.output.render({}, {
+    nodes: [{ nodeId: 'n1', online: true, queue: { queued: 0, running: 0, maxConcurrent: 4, oldestQueuedMs: 0, starved: false } }],
+  })
+  assert.equal(quietRender[0].text.includes('堵死'), false, '空闲节点不渲染堵死告警')
 })
 
 test('hub⇄worker e2e：remote-agent subagent provider 接线正确', async (t) => {
