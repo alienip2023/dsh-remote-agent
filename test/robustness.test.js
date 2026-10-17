@@ -235,6 +235,11 @@ test('transport：close 时必须清掉握手定时器（断连重连路径不�
   const transport = new NodeTransport({ mode: 'direct', url: 'ws://127.0.0.1:1/x', hello: { nodeId: 'n' } })
   const { conn } = fakeConn()
 
+  // ⚠ 2026-10-17 改：真实流程是 `this.conn = conn` 然后 `attach(conn)`
+  // （connectOnce 里那两行）。close 处理器现在有**陈旧连接校验** ——
+  // `this.conn !== conn` 时直接返回（防止陈旧连接的 close 把活着的新连接
+  // 引用清掉）。所以测试必须先把 conn 设成"当前连接"，否则走不到清理分支。
+  transport.conn = conn
   transport.attach(conn)
   transport.armHandshakeTimeout(conn)
   assert.ok(transport.hsTimer, 'arm 之后必须有定时器在位')
@@ -242,6 +247,29 @@ test('transport：close 时必须清掉握手定时器（断连重连路径不�
   // 对端断开：close 处理器应清掉 hsTimer（否则重连后旧 timer 会误伤新连接）
   conn.emit('close', 1006, 'test')
   assert.equal(transport.hsTimer, undefined, 'close 必须清握手定时器')
+  assert.equal(transport.conn, undefined, 'close 必须清当前连接引用')
+})
+
+test('transport：陈旧连接的 close 不得清掉新连接的状态（2026-10-17 修 L1）', async () => {
+  // 场景：start() 被调两次（cordis effect 热重载）→ 两条 TCP 连接。
+  // 没有陈旧连接校验时，旧连接的 close 会把 this.conn 清成 undefined，
+  // 活着的新连接变成引用丢失的孤儿 → 发送全失败 + 重连被 duplicate-node 拒
+  // → 副机永久失联。这是 hub 侧 RelayLink 早已有的不变式，副机侧当时漏了。
+  const transport = new NodeTransport({ mode: 'direct', url: 'ws://127.0.0.1:1/x', hello: { nodeId: 'n' } })
+  const oldConn = fakeConn().conn
+  const newConn = fakeConn().conn
+
+  // 旧连接先 attach，然后被新连接取代
+  transport.conn = oldConn
+  transport.attach(oldConn)
+  transport.conn = newConn
+  transport.attach(newConn)
+  transport.armHandshakeTimeout(newConn)
+
+  // 旧连接迟到的 close —— 必须什么都不做
+  oldConn.emit('close', 1006, 'stale')
+  assert.equal(transport.conn, newConn, '陈旧连接的 close 不得清掉当前连接')
+  assert.ok(transport.hsTimer, '陈旧连接的 close 不得清掉新连接的握手定时器')
 })
 
 /* ══════════════════ 边界：分块帧头构造走真实编码器 ══════════════════ */

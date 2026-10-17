@@ -108,12 +108,30 @@ test('approveTask：不是挂起态 / 不存在 → false（幂等安全）', (t
   assert.equal(registry.getTask('t1').status, TASK_STATUS.QUEUED)
 })
 
-test('approveTask：批准时节点已掉线 → 抛 node unreachable，任务删除（绝不静默退回挂起）', (t) => {
+test('approveTask：批准时节点已掉线 → 抛 node unreachable，任务转 failed 终态（保留可见）', async (t) => {
   const { registry } = setup(t)
   registry.createTask({ nodeId: 'n1', spec: EXEC_SPEC('t1') })
   registry.nodes.get('n1').online = false
+
+  // 2026-10-17 改（代码审查 M3）：原实现是 `tasks.delete(taskId)` —— 任务从
+  // hub 视图**彻底消失**（不是失败、不是挂起，是不存在），与该方法注释自称的
+  // "转 failed 终态"直接矛盾。后果：remote_status / 面板都查不到该任务、
+  // awaitTerminal 等不到终态只能靠超时兜底（最长可挂 1 小时+）。
+  //
+  // 现在改成**保留记录并置终态**：状态可见、可查、可重试。
+  const terminalP = registry.awaitTerminal('t1')
   assert.throws(() => registry.approveTask('t1'), /node unreachable/)
-  assert.equal(registry.getTask('t1'), undefined, '批准失败的转 failed（删除），不能留在挂起态')
+
+  const task = registry.getTask('t1')
+  assert.ok(task, '任务记录必须保留（不能删除）')
+  assert.equal(task.status, TASK_STATUS.FAILED, '应置 failed 终态')
+  assert.equal(task.error.code, 'node-unreachable')
+  assert.ok(task.endedAt > 0, '应有结束时间')
+
+  // 等待器必须被唤醒（不唤醒会挂到超时）
+  const done = await terminalP
+  assert.equal(done.status, TASK_STATUS.FAILED)
+  assert.ok(TERMINAL_STATUS.has(done.status), '必须是终态')
 })
 
 test('rejectTask：转 rejected 终态 + error 码，等待器被唤醒', async (t) => {
