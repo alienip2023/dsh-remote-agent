@@ -181,6 +181,7 @@ test('fs-service grep：字面量与正则、glob 过滤、命中结构', (t) =>
   // （/var/folders/...）本身是符号链接，fs-service 内 realpathSync.native
   // 会归一成 /private/var/...，与 mkdtempSync 返回的 root 前缀不一致
   // （CI macos 抓到）。按尾部相对段断言。
+  const r4 = svc.grep({ path: root, pattern: 'needle', glob: '*.js' })
   const jsFiles = [...new Set(r4.matches.map((m) => m.file))]
   assert.equal(jsFiles.length, 1, `glob=*.js 应只命中一个文件，实际 ${jsFiles.length}`)
   assert.ok(jsFiles[0].endsWith(path.join('code', 'main.js')), `应命中 code/main.js，实际 ${jsFiles[0]}`)
