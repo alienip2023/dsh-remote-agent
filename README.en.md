@@ -18,7 +18,7 @@ explicitly pull them.
 ┌──────────── main machine (hub) ────────────┐
 │  DSH · model · session logs · all credentials │
 │  ┌─ dsh-remote-agent ─────────────────────┐ │
-│  │ 7 remote_* tools + Web panel            │ │
+│  │ 12 remote_* tools + Web panel           │ │
 │  └────────────────────────────────────────┘ │
 └──────────────────▲──────────────────────────┘
                    │ node dials in (direct / relay)
@@ -32,15 +32,21 @@ explicitly pull them.
 
 | | |
 |---|---|
-| **Status** | 0.4.0 —— hub side end-to-end usable; real-runtime dial-in verified (standalone worker process → running DSH desktop hub, see [KNOWN-ISSUES §8](KNOWN-ISSUES.md)); both `exec` and `agent` paths verified on two real machines |
+| **Status** | 0.8.1 —— hub + worker end-to-end usable; both `exec` and `agent` paths verified on two real machines; CI covers Windows / macOS / Linux |
 | **DSH** | Desktop / CLI, verified on 0.2.0-rc.2 |
 | **Platforms** | Windows (fully verified) · Linux / macOS (CI covered) |
 | **Dependencies** | **Zero external npm dependencies** —— `node:` built-ins only |
 | **Node** | `^22.19.0 \|\| >=24.0.0` |
+| **Tests** | 938 (937 pass / 1 skip) · 117 doc-drift assertions · eslint strict |
 
 **Web panel**（sidebar → "远程同事" / Remote co-worker）：node list with CPU /
 memory badges, task dispatch, task states, result summaries, workspace changes,
-change diffs (unified diffs of text-file edits), final artifacts, log tail.
+change diffs (unified diffs of text-file edits), final artifacts, log tail,
+**environment health-check**, **workspace sharing (SMB)**, model dropdown.
+
+> **Works out of the box**: restart DSH after install and it just works. The
+> bundled patch defaults `role: auto` (no `hubUrl` ⇒ hub) and binds `webserver`
+> to `0.0.0.0:19387` (otherwise workers can never connect). See *Install* below.
 
 <p align="center">
   <img src="docs/screenshots/panel-main.png" width="720" alt="Web panel: nodes, dispatch form, task list">
@@ -103,6 +109,91 @@ node bin/dsh-remote-setup.js --doctor your-config.yml
 
 Not interactive? One command does it all: `--role worker --hub-url
 192.168.1.10:19387 --token nt_xxx --roots D:\work --node-id slave-pc`.
+
+---
+
+## Features
+
+### 1. Dispatch tasks to the worker
+
+| Feature | What it does |
+|---|---|
+| **Two task modes** | `exec` runs a command directly (`npm run build`, `git pull`, bulk renames in `D:\work`); `agent` spins up an **independent agent session** on the worker that plans, calls tools and writes files itself |
+| **Two-phase approval** | `exec` is held for confirmation by default (`approval: 'manual'`) — nothing runs until a human approves. Guards against an AI dispatching a destructive command |
+| **Dry-run preview** | See which node it routes to, which model, which directory, what artifacts to expect — without dispatching |
+| **Repo-aware routing** | Workers report git repos under their `roots`; `remote_task({repo: 'my-project'})` finds the worker that has it |
+| **Load-aware routing** | Workers report CPU/memory/load every 30s; omitting `node` picks the least loaded |
+| **Model selection** | Panel offers a dropdown of the worker's **self-reported model list** (no guessing provider/model names); headless backends that can't take a model are **rejected before dispatch** |
+| **Per-mode timeouts** | `exec` defaults to 10 minutes (a runaway command shouldn't hold a machine for an hour); `agent` defaults to 1 hour |
+| **Concurrency cap** | Worker `maxConcurrent` (default 4); excess tasks queue, `remote_status` shows queue depth and oldest wait |
+
+### 2. Get results without moving the whole workspace
+
+| Feature | What it does |
+|---|---|
+| **Handoff card** | A task returns one card: summary + workspace changes + artifact manifest + exit code. **Not** the whole directory |
+| **Three-way artifact classification** | Files are `final` / `intermediate` / `other`; **only `final` can be pulled**. Logs, caches, `node_modules` stay on the worker |
+| **Explicit pull** | Pull individual files with `remote_pull`, glob filters supported |
+| **Resume on interruption** | A pull that drops mid-way doesn't restart: received bytes are kept and the retry continues from `startOffset` with `prefixSha256` verification |
+| **Change diff view** | Compares the workspace before/after, showing exactly which files changed and by how many bytes |
+
+### 3. Browse the worker's files directly (without touching the task queue)
+
+Four **read-only** tools over a separate `fs/req`↔`fs/res` frame — **they bypass the
+task queue and don't consume a concurrency slot**. Even when the worker is saturated
+with a long task, these answer instantly:
+
+| Tool | Purpose |
+|---|---|
+| `remote_ls` | List a directory (single level, paginated) |
+| `remote_read` | Read a file (text by line range; binaries return metadata only) |
+| `remote_grep` | Full-text search **locally** on the worker (pure JS, no process spawn) |
+| `remote_tree` | Directory tree summary (scanning happens on the worker; only structure returns) |
+
+Safety: paths must be inside the node's `roots`, `denyPaths` applies, symlinks are
+listed but never dereferenced.
+
+### 4. Open the worker's files in your local IDE (SMB share)
+
+The panel's *Workspace sharing* section publishes a worker directory over SMB; the
+hub maps it with `net use X: \\worker\dsh-work-...` and you can open it in local VS Code.
+
+> **⚠ This bypasses the plugin's security boundary** (`roots` / `denyPaths` stop
+> applying, intermediates and secrets become visible to the hub, and a new
+> credential surface appears). Requires **explicit second confirmation**; **read-only
+> by default**. Full risk notes: [docs/workspace-share.md](docs/workspace-share.md).
+
+### 5. Diagnose problems yourself
+
+| Feature | What it does |
+|---|---|
+| **Environment health-check** | One click in the panel checks 8 items: role config, `inject` dependencies, **whether the web server is bound to a reachable address**, port, firewall, `roots` existence, Tailscale, workers online. **Every item comes with a concrete fix**; auto-fixable ones are flagged |
+| **Reachability self-check** | At startup, verifies `webServer` isn't bound to loopback — if it is, workers can never connect while the hub side looks perfectly healthy. Logs a clear warning and shows a red banner |
+| **Queue health snapshot** | Workers report `queued` / `running` / `maxConcurrent` / oldest wait with each resource frame; both the panel and `remote_nodes` warn when the queue is jammed |
+| **"Running" grouping** | Running tasks are pinned on top with **elapsed time** (the only clue for "is it stuck?") |
+| **Cancel really aborts** | `remote_cancel` actually terminates the agent loop (not just setting a flag and letting it finish) |
+| **Audit log** | Dispatch / cancel / pull / approval all recorded (`~/.dsh-remote-agent/audit.jsonl`, rotated) |
+
+### 6. Disconnects, NAT traversal, security
+
+| Feature | What it does |
+|---|---|
+| **Disconnects don't kill tasks** | Relay down or hub restarted, the worker keeps running; `task/sync` reconciles on reconnect and **never re-runs completed work** |
+| **Two transports** | `direct` (same LAN / Tailscale); `relay` (both behind NAT, needs a VPS) |
+| **End-to-end encryption** | In relay mode, business frames use X25519 + AES-256-GCM; the relay only sees routing envelopes |
+| **Hub authentication** | Workers verify the hub: persistent ed25519 identity + fingerprint carried in the pairing code, TOFU-pinned on first connect |
+| **Credentials never leave the worker** | The protocol carries no model keys; the worker runs its own loop with its own model config |
+| **Zero npm dependencies** | `node:` built-ins only, no build step, `lib/` is the artifact |
+
+### Tool reference (12 tools)
+
+| Category | Tools |
+|---|---|
+| **Nodes** | `remote_nodes` (list + load + queue + model list) |
+| **Tasks** | `remote_task` (dispatch) · `remote_status` (progress) · `remote_cancel` (abort) |
+| **Approval** | `approval: 'manual'` holds the task → approve/reject from the panel or tools |
+| **Results** | `remote_handoff` (result card) · `remote_manifest` (artifact list) · `remote_pull` (fetch finals) · `remote_purge` (cleanup) |
+| **Files** | `remote_ls` · `remote_read` · `remote_grep` · `remote_tree` |
 
 ---
 
@@ -335,7 +426,7 @@ computer.** Read **[SECURITY.md](SECURITY.md)** before deploying — especially:
 | Path | Purpose |
 |---|---|
 | `lib/index.js` | Plugin entry (role dispatcher: `role: hub` / `worker` / `both`) |
-| `lib/hub/**` | Hub side: node registry, 7 tools, subagent provider, UI routes |
+| `lib/hub/**` | Hub side: node registry, **12 tools**, subagent provider, UI routes, environment health-check |
 | `lib/hub/views.js` | **Shared projection layer** —— tools and the UI use the same field whitelist |
 | `lib/node/**` | Worker side: dial-in, task engine, artifact service, exec/agent backends |
 | `lib/client.js` | Browser half (Web panel) |

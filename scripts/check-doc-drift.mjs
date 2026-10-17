@@ -1024,6 +1024,34 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     'ui-routes.js（二次确认）+ client.js（勾选框/只读默认）+ share-service.js + node/index.js')
 }
 
+/* ── 83. README 声明的工具数量必须等于代码里实际注册的数量 ──
+ *
+ * 起因（2026-10-17）：README 写「7 个 remote_* 工具」，实际早已是 12 个
+ * （8 个 remote_* + 4 个 fs 工具）。这种数字漂移是最容易积累的文档债务 ——
+ * 每次加工具都忘了改 README，而读者会拿它当事实。
+ *
+ * 断言做法：数 `reg(` / `fsOp(` 的注册调用，与 README 里的声明比对。
+ * 两边任一变化都会立刻失败，逼着改的人同步另一处。
+ */
+{
+  const toolsSrc = read('lib/hub/tools.js')
+  const rootReadme2 = read('README.md')
+
+  // 数实际注册：`reg(` 与 `fsOp(` 的调用点（都是工具注册入口）
+  const regCount = (toolsSrc.match(/^\s{2}reg\(/gm) || []).length
+  const fsOpCount = (toolsSrc.match(/^\s{2}fsOp\(/gm) || []).length
+  const actual = regCount + fsOpCount
+
+  // 从 README 里抽声明（形如「12 个 remote_* 工具」或「工具速查（共 12 个）」）
+  const m = /(?:共\s*(\d+)\s*个|(\d+)\s*个\s*remote_\*)/.exec(rootReadme2)
+  const declared = m ? Number(m[1] ?? m[2]) : null
+
+  check('83', 'README 声明的工具数量等于代码里实际注册的数量',
+    declared !== null && declared === actual,
+    `lib/hub/tools.js（实际 ${actual} 个：reg=${regCount} + fsOp=${fsOpCount}）`
+    + ` vs README.md（声明 ${declared === null ? '未找到' : declared} 个）`)
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {
