@@ -831,6 +831,61 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     'lib/node/runner.js（abortPromise 进 race + ok 排除 aborted + 超时不误标）')
 }
 
+/* ── 75. #27 完整链路：模型清单自述 → 面板下拉（2026-10-17）──
+ *
+ * v0.7.0 只做了"自述 + 派发前拦截"，面板仍是自由文本 —— 当时的判断是
+ * "DSH 没有稳定的清单 API"。**那个判断已过时**：`ctx.llm.listProviders()`
+ * 与 `listModels(provider)` 现在就是稳定服务面。
+ *
+ * 链路四段，任一断掉面板就退回自由文本：
+ *   1. 副机 readAvailableModels（探测 + 缓存 + 上限）
+ *   2. RESOURCE 帧带缓存值（interval 回调是同步的，不能 await）
+ *   3. hub 字段级清洗 + 独立封顶
+ *   4. registry.list → nodeView → 面板 <select>
+ *
+ * 安全边界：只报 provider/id/name，绝不带 apiKeyEnv / baseURL / 凭证。
+ */
+{
+  const nodeIdx = read('lib/node/index.js')
+  const ingestSrc = read('lib/hub/registry-ingest.js')
+  const viewsSrc = read('lib/hub/views.js')
+  const clientSrc = read('lib/client.js')
+
+  check('75', '#27 模型清单链路：副机探测 + 帧自述 + hub 清洗 + 视图投影 + 面板下拉都在',
+    /export async function readAvailableModels/.test(nodeIdx)
+    && /llm\.listProviders\(\)/.test(nodeIdx)
+    && /llm\.listModels\(/.test(nodeIdx)
+    && /models:\s*cachedModels/.test(nodeIdx)
+    && /MAX_NODE_MODELS/.test(ingestSrc)
+    && /models: Array\.isArray\(r\.models\)/.test(read('lib/hub/node-registry.js'))
+    && /models: Array\.isArray\(n\.models\)/.test(viewsSrc)
+    && /跟随副机默认/.test(clientSrc)
+    && /__custom__/.test(clientSrc),
+    'lib/node/index.js + registry-ingest.js + node-registry.js + views.js + client.js')
+
+  check('76', '#27 安全：模型自述只含 provider/id/name，不碰凭证',
+    (() => {
+      const code = nodeIdx.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+      const i = code.indexOf('export async function readAvailableModels')
+      if (i < 0) return false
+      const seg = code.slice(i, i + 2600)
+      // 上报对象里不得出现凭证相关字段
+      if (/apiKeyEnv/.test(seg) || /baseURL/.test(seg)) return false
+      const push = seg.match(/models\.push\(\{([^}]*)\}\)/)
+      if (!push) return false
+      const inner = push[1]
+      const keys = new Set()
+      for (const m of inner.matchAll(/(\w+)\s*:/g)) keys.add(m[1])
+      for (const part of inner.split(',')) {
+        const t = part.trim()
+        if (/^[A-Za-z_$][\w$]*$/.test(t)) keys.add(t)
+      }
+      const got = [...keys].sort().join(',')
+      return got === 'id,name,provider'
+    })(),
+    'lib/node/index.js readAvailableModels（上报字段恰好 provider/id/name）')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

@@ -11,6 +11,46 @@
 
 ## [未发布]
 
+### 功能：#27 完整版 —— 模型清单自述 + 面板下拉
+
+v0.7.0 只做了"自述 + 派发前拦截"，面板仍是自由文本 —— 当时的判断是
+"in-process 后端没有稳定的清单 API（DSH 内部的 `model/list` 走 app-server
+协议面，fiber 服务摸不到）"。**那个判断已经过时**：`ctx.llm` 现在直接暴露
+`listProviders()` 与 `listModels(provider)`，这就是稳定服务面。
+
+所以本版把最后一环补上，链路四段：
+
+1. **副机探测**（`readAvailableModels`）：`ctx.llm.listProviders()` →
+   逐个 `listModels(provider)`。单个 provider 失败 `continue`（不打断其它），
+   全部失败返回 `null`（面板退回自由文本）。上限：8 provider / 每 provider
+   24 模型 / 总 64 —— 不让 RESOURCE 帧膨胀。
+
+2. **RESOURCE 帧带缓存**：探测是 async 而 interval 回调是同步的，所以用
+   后台串行链刷新（启动探一次 + 每 10 分钟重探），帧里带**上一次的结果**。
+   用串行链而不是 `void refresh()` 是为了防探测堆积（探测慢时每 30s 一次帧
+   会越积越多）。探测失败保留旧值 —— 一次网络抖动不该让面板下拉消失。
+
+3. **hub 摄入**（`registry-ingest`）：字段级清洗 + **独立封顶**
+   （`MAX_NODE_MODELS`，不信任对端遵守了自己的上限）。
+   `models: null` **保留旧值**（与 `defaultModel` 的 null 清空语义刻意不同）。
+
+4. **视图 + 面板**：`registry.list()` → `nodeView()` 逐条投影（不 spread）
+   → 面板 `<select>`：
+   - 第一项"跟随副机默认（provider/model）"
+   - 中间是各模型，多节点时带 `· 节点名` 后缀
+   - 最后一项"自定义…"（展开回文本框）
+   - **没有清单时退回文本框**（向后兼容旧副机）
+
+**安全边界**：只上报 provider 键名 + model id + 显示名。
+绝不上报 apiKeyEnv 的值、baseURL、任何凭证。`listProviders()` 只返回
+已注册（有 adapter）的 route —— 天然满足"不泄露这台机器配了哪些渠道"，
+只有真能用的才会出现。
+
+测试：`test/model-list-dropdown.test.js` 13 条（四段链路逐段钉住 +
+"上报字段恰好是 provider/id/name"的硬断言 + 单个 provider 失败不打断 +
+null/[] 语义区分 + 面板有 select/自定义/多节点后缀）。
+doc-drift 新增 75（链路四段）、76（安全边界）两条锚点。
+
 ### 修复：原子写 EPERM 立项修（第 5 次 CI 失败）
 
 `atomicWriteJson` 的 rename 在 Windows 上被 EPERM 拦（目标正被另一个句柄
