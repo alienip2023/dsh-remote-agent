@@ -9,7 +9,125 @@
 
 ---
 
-## [未发布]
+## [0.9.0] - 2026-10-17
+
+### ⚠ 行为变更：exec 任务默认超时 1 小时 → 10 分钟
+
+**升级前请读这一段。**
+
+此前 `exec` 任务实际拿到的超时是 **60 分钟**（不论文档说什么）。
+原因是三处缺陷叠加（详见下方「代码审查修复」的 H1）：
+
+1. `tools.js` 里有个 TDZ 自引用 bug，让分模式默认值那条分支永远走不到
+2. `hub/index.js` 用 `numOr(defaults.timeoutMs, 1h)` 兜底，把 `explicitTimeoutMs`
+   压成恒 3600000 → 优先级 `args > 显式配置 > 分模式默认` 被压扁成「恒 1h」
+3. 面板 dispatch 同样写死 `?? 3600000`
+
+三处都修了，所以现在：
+
+| 模式 | 默认超时 | 意味着 |
+|---|---|---|
+| `exec` | **10 分钟**（`EXEC_DEFAULT_TIMEOUT_MS`） | 失控命令最多跑 10 分钟就被杀，不再占机一小时 |
+| `agent` | 1 小时（不变） | agent 任务本来就需要长窗口 |
+
+**如果你有 exec 任务本来就要跑 10 分钟以上**，显式传 `timeoutMs`：
+
+- 工具：`remote_task({ ..., timeoutMs: 1800000 })`（30 分钟）
+- 面板：派发表单的「超时毫秒」字段
+- 配置：`defaults.timeoutMs`（作用于所有任务，优先于分模式默认）
+
+### 修复：代码审查（1 High + 3 Medium + 6 Low）
+
+WorkBuddy 2026-10-17 对 `lib/` 全部 26 个源文件（约 19,900 行）做全量审查，
+发现的缺陷逐条核实为真后修复。
+
+#### H1（High）tools.js TDZ 自引用
+
+```js
+const v = validateTaskStart({ constraints: {
+  timeoutMs: ... ?? (v.spec.mode === 'exec' ? ... : ...)
+                         ^ v 正在初始化，进入 TDZ
+```
+
+`??` 链左侧全空时抛 `ReferenceError`。
+
+**为什么 829 个测试全绿仍带此 bug**：e2e helper 恒传 `timeoutMs`（`??` 第一项
+短路）、单测构造时 defaults 也总有值 —— 该分支**从未被求值**。这是典型的
+「测试环境与生产装配层差异造成的盲区」。
+
+生产没炸但更糟：`normalizeConfig` 的 1h 兜底让 TDZ 永不触发，却把分模式
+默认压成死代码（见上方行为变更）。
+
+修复：改用已在 `v` 之前求值的 `routeMode`。
+
+#### M1（Medium）relay 第三条 hub 写路径漏背压
+
+C1-1 的背压修复只加在 `broadcastHubs` / `broadcastHubsBinary` 两条路径上，
+**node 上行帧 → 全 hub 广播是第三条**，漏网。而 `ws.js` 的 `overBudget` 只是
+查询属性、不自动断连，所以这条路径的写缓冲**没有任何上限检查**。
+
+实测过的后果形态：单个停滞对端把 relay `writableLength` 推到 339.8 MiB、
+RSS 419 MiB。中继是 NAT 场景唯一会合点、单进程常驻，OOM 即全体断连。
+
+#### M2（Medium）grep 单文件分支无大小护栏
+
+目录扫描路径有 `GREP_FILE_MAX`（2MB）与 `GREP_TIME_MS`（10s）双护栏，
+但 `st.isFile()` 分支**直接 `readFileSync` 全文**。触发形态：`remote_grep` 的
+path 指向工作区内巨大文本文件（应用日志 / 数据库转储 / core dump）→
+副机 OOM + 同步阻塞事件循环。**这是一条可达的 DoS 面**（agent 自主选择 grep 目标）。
+
+#### M3（Medium）approveTask 节点不可达时删除任务
+
+原实现 `this.tasks.delete(taskId)` —— 任务从 hub 视图**彻底消失**（不是失败、
+不是挂起，是不存在），与该方法注释自称的「转 failed 终态」**直接矛盾**。
+
+后果：`remote_status` / 面板都查不到；`awaitTerminal` 等不到终态只能靠超时
+兜底（最长 1 小时+）；与 ui-routes 的 502 文案不符。
+
+修复：保留记录 + 置 FAILED + `error.code='node-unreachable'` + 唤醒等待者。
+
+#### Low 系列（修 6 条）
+
+- **L1** 副机 transport 缺 RelayLink 的两条并发不变式：
+  `connecting` 闸门（`start()` 被调两次会开两条 TCP 连接）、close 必须校验
+  `this.conn === conn`（否则陈旧连接的 close 把活着的新连接引用清掉 → 副机永久失联）
+- **L2** RESOURCE 分支 `rec` 未判空（影子节点竞态必抛 TypeError）
+- **L3** runner 的 active 注册晚于 `await createAgent`（窗口期内 cancel 返回
+  false，正是 #26-5 修过的形态复现）→ 改为先占位再 await
+- **L4** `E2E_REOFFER_DEBOUNCE_MS` 死常量 → 真正按 250ms 时间窗去抖
+  （⚠ 它是**实例字段**不是 static，必须经 `this.` 读）
+- **L5/L6/L7 未修**（记录在案）：relay 模式 hub 去重被中继层兜住、WS 版本校验
+  双方恒发 13、hub 空闲淘汰被副机 15s 心跳掩盖 —— 属一致性改进而非缺陷
+
+#### 测试
+
+新增 `test/code-review-regressions.test.js` **11 条**，覆盖 H1/M1/M2/M3/L1/L2/L4。
+**H1 的测试刻意不走 e2e helper**（那正是盲区成因）。
+
+### 文档：README 补「功能」章节
+
+用户指出「README 好像没有功能相关的介绍」—— 核实后发现**比这更严重**：
+
+- **版本号落后 4 个版本**（写 0.4.0，实际 0.8.x）
+- **工具数量写错**（写「7 个」，实际 **12 个**：8 个 `remote_*` + 4 个 fs 工具），
+  出现在架构图、目录表、工具速查三处
+- 确实没有功能总览章节
+
+新增「功能」六组：派任务 / 拿结果 / 翻文件 / 本地 IDE 打开（SMB）/ 自我诊断 /
+断连跨网安全。英文版同步。
+
+新增断言 83：**README 声明的工具数量必须等于代码里 `reg(` + `fsOp(` 的注册数**，
+两边任一变化立刻失败（做过负向验证）。
+
+### 关于 0.8.0 与 0.8.1（记录）
+
+0.8.0 的 publish 第一次报「假成功」（tarball 未落地），当时判断它卡在 staging
+并跳过发布了 0.8.1。事后查 registry 发现 **0.8.0 最终也发布成功了**
+（07:43:45，比 0.8.1 晚 3 分钟）—— 那次 `unpublish` 同样假成功。
+
+两个版本内容基本相同（都是 #26-4/#26-5 + EPERM 修复 + #27 完整版），
+不影响使用。教训：**npm publish 的成功/失败判定必须用 `Cache-Control: no-cache`
+读 registry 核实**，不能只看 exit code 或缓存副本。
 
 ### 文档：README 补「功能」章节 + 修正 4 个版本号的漂移
 
