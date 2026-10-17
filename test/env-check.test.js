@@ -212,13 +212,23 @@ test('汇总：failed 只统计 error 级（warn 不算失败）', () => {
 })
 
 test('汇总：autoFixable 统计可自动修的项', () => {
+  // ⚠ 2026-10-17 改：原用例传 `role: ''`（未配置）却期望 reachability 也参与 ——
+  // 但**角色未配置时不算 hub，可达性检查本就不该跑**（连"是不是主机"都不知道，
+  // 谈"副机能不能连上"没有意义）。那是用例的期望错了，不是实现错了。
+  //
+  // 现在的场景：角色已配为 hub（但 inject 缺服务 + 绑 loopback），
+  // 这三项都该被判失败且都可自动修。
   const r = envChecks({
     role: 'hub',
-    config: { role: '', inject: ['webServer'] },
+    config: { role: 'hub', inject: ['webServer'] },
     reachability: { bound: '127.0.0.1', origin: 'http://127.0.0.1:19387', loopback: true, hint: '' },
   })
-  // role / inject / reachability 三项都可自动修
-  assert.ok(r.autoFixable >= 3, `应至少 3 项可自动修，实际 ${r.autoFixable}`)
+  // inject（缺 tools/systemPrompt）+ reachability（绑 loopback）两项可自动修
+  assert.ok(r.autoFixable >= 2, `应至少 2 项可自动修，实际 ${r.autoFixable}`)
+  // 三项确实都在失败态里
+  const failedIds = r.items.filter((x) => !x.ok).map((x) => x.id)
+  assert.ok(failedIds.includes('inject'), `inject 应判失败，实际失败项：${failedIds.join(',')}`)
+  assert.ok(failedIds.includes('reachability'), `reachability 应判失败，实际失败项：${failedIds.join(',')}`)
 })
 
 test('不抛：所有探测项都传 null / 缺省时也不炸', () => {
@@ -253,14 +263,18 @@ test('renderEnvChecks：每项失败都带"怎么修"', () => {
   assert.ok(fixLines.length >= failLines.length, `✗ 有 ${failLines.length} 个，修法只有 ${fixLines.length} 条`)
 })
 
-test('renderEnvChecks：可自动修的项要明说', () => {
+test('renderEnvChecks：可自动修的项要明说（但不承诺一键修复）', () => {
   const r = envChecks({
     role: 'hub',
     config: { role: 'hub' },
     reachability: { bound: '127.0.0.1', origin: 'http://127.0.0.1:19387', loopback: true, hint: '' },
   })
   const { text } = renderEnvChecks(r)
-  assert.match(text, /可以自动修/, '应提示该项可自动修')
+  // ⚠ 2026-10-17 改（v0.9.0 审查 L3）：原断言查 "可以自动修"，但全仓库
+  // **没有 fix 路由 / 没有 --fix 参数** —— 那句是虚假承诺。
+  // 现在如实说明"修法是机械的（照抄即可）"，不再暗示有一键修复。
+  assert.match(text, /修法机械|照抄/, '应如实说明修法是机械的')
+  assert.ok(!/加 --fix|点「修复」/.test(text), '不得承诺不存在的 --fix / 修复按钮')
 })
 
 test('renderEnvChecks：全通过时给出明确结论', () => {

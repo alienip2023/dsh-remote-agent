@@ -32,12 +32,12 @@ explicitly pull them.
 
 | | |
 |---|---|
-| **Status** | 0.8.1 —— hub + worker end-to-end usable; both `exec` and `agent` paths verified on two real machines; CI covers Windows / macOS / Linux |
+| **Status** | 0.9.0 —— hub + worker end-to-end usable; both `exec` and `agent` paths verified on two real machines; CI covers Windows / macOS / Linux |
 | **DSH** | Desktop / CLI, verified on 0.2.0-rc.2 |
 | **Platforms** | Windows (fully verified) · Linux / macOS (CI covered) |
 | **Dependencies** | **Zero external npm dependencies** —— `node:` built-ins only |
 | **Node** | `^22.19.0 \|\| >=24.0.0` |
-| **Tests** | 938 (937 pass / 1 skip) · 117 doc-drift assertions · eslint strict |
+| **Tests** | 938 (937 pass / 1 skip) · 118 doc-drift assertions · eslint strict |
 
 **Web panel**（sidebar → "远程同事" / Remote co-worker）：node list with CPU /
 memory badges, task dispatch, task states, result summaries, workspace changes,

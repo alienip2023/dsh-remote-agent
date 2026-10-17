@@ -31,6 +31,12 @@ import {
   writePatchBlock,
 } from '../lib/setup.js'
 import { encodePairCode, decodePairCode } from '../lib/pairing.js'
+// ── 运行时态体检（2026-10-17 修 v0.9.0 审查 M1）───────────────────
+// CLI 此前只跑 setup.js 的 doctorChecks（14 项静态检查），**没有可达性 /
+// loopback 诊断** —— 而它正是本版本最重要的那条。现在两段都跑、结果合并。
+// resolveRole 保证 auto 被推断成实际角色（与运行时同一份实现）。
+import { resolveRole } from '../lib/index.js'
+import { envChecks, isLoopbackOrigin } from '../lib/env-check.js'
 import { IDENTITY_FILE_NAME, readHubIdentity } from '../lib/identity.js'
 
 const DIM = '\x1b[2m'
@@ -159,7 +165,11 @@ async function runDoctor(positionals) {
     ? [...rootsM[1].matchAll(/-\s*(.+)/g)].map((m) => m[1].replace(/^['"]|['"]$/g, '').trim())
     : splitRoots(grab('roots'))
   const config = {
-    role: grab('role') || 'hub',
+    // ⚠ 不要在这里默认成 'hub'（2026-10-17 修 v0.9.0 审查 M1）：
+    // v0.9.0 起默认安装的生效配置是 `role: auto`。写死 'hub' 会让
+    // `--doctor` 把 auto-worker 当 hub 体检（判据全错）。
+    // 保留文件里的原值，让 resolveRole 去推断。
+    role: grab('role'),
     hubUrl: grab('hubUrl'),
     token: grab('token'),
     nodeToken: grab('nodeToken'),
@@ -168,9 +178,72 @@ async function runDoctor(positionals) {
     roots,
     uiPullRoot: grab('uiPullRoot'),
   }
-  const role = config.role === 'worker' ? 'worker' : 'hub'
 
+  // 角色解析用**与运行时同一份实现**（唯一真相）：auto 在这里被推断成
+  // 实际角色，这样 doctor 报告的 role 与 hub 实际行为一致。
+  const resolvedRole = resolveRole(config) || ''
+  const role = resolvedRole === 'worker' || resolvedRole === 'both' ? 'worker' : 'hub'
+
+  // ⚠ 两段体检合并（2026-10-17 修 v0.9.0 审查 M1）：
+  //
+  // 此前 CLI `--doctor`（lib/setup.js 的 doctorChecks，14 项）与面板体检
+  // （lib/env-check.js 的 envChecks，8 项）是**两套并行实现**，检查项不相交：
+  //   · CLI 有 Node 版本 / hubUrl 合法性 / token / uiPullRoot
+  //     但**没有可达性/loopback 检查**（本版本最重要的诊断！）
+  //   · 面板有 reachability / inject / roots / tailscale / nodes
+  //     但没有 Node 版本 / hubUrl / token
+  //
+  // 注释里三处声称"共用同一份逻辑"——那是失真的。现在的做法：
+  // **两段都跑，合并输出**。CLI 独有项（配置字段合法性）保留在 doctorChecks，
+  // 运行时态检查（可达性 / inject / roots 存在性）交给 envChecks。
+  //
+  // 这样既不失 CLI 的静态校验能力，又补上了 loopback 这个关键诊断。
   const checks = doctorChecks({ role, config, lanIps: detectLanIps() })
+
+  // ── 追加 envChecks（运行时态检查）────────────────────────────────
+  //
+  // 探测参数：CLI 能真探测的才传，拿不到的留 null（envChecks 会跳过该项，
+  // 不会误报）。
+  //   · webserver host 从配置文件里读（静态可判 —— 正是 loopback 检查的关键）
+  //   · roots 存在性真查文件系统
+  try {
+    const wsHost = grab('host')
+    const wsPort = grab('port')
+    // 从配置里找 webserver 段（形如 `- id: webserver` 之后几行的 host/port）
+    const wsBlock = /- id:\s*webserver[\s\S]{0,400}?host:\s*['"]?([^'"\n]+)['"]?[\s\S]{0,120}?port:\s*(\d+)/.exec(raw)
+    const boundHost = wsBlock ? wsBlock[1].trim() : (wsHost || '')
+    const boundPort = wsBlock ? Number(wsBlock[2]) : (Number(wsPort) || 19387)
+    const loopback = isLoopbackOrigin(`http://${boundHost || '127.0.0.1'}:${boundPort}`)
+    const missingRoots = config.roots.filter((r) => {
+      try { return !fs.existsSync(r) } catch { return true }
+    })
+    const env = envChecks({
+      role: resolvedRole || 'hub',
+      config,
+      reachability: boundHost === '' && !wsBlock
+        ? null
+        : {
+          bound: boundHost,
+          origin: `http://${boundHost || '127.0.0.1'}:${boundPort}`,
+          loopback: loopback === true,
+          hint: '',
+        },
+      missingRoots,
+    })
+    // 合并：envChecks 的项追加到 CLI 结果后（格式一致：{ok, label, fix}）
+    for (const it of env.items) {
+      checks.push({
+        ok: it.ok,
+        // 带上 emoji 级的严重度提示：warn 不算失败但要看得见
+        label: `${it.label}${it.detail ? ` —— ${it.detail}` : ''}`,
+        fix: it.fix,
+      })
+    }
+  } catch (err) {
+    // envChecks 自身出错不能挡 CLI 体检（它只是补充）
+    checks.push({ ok: true, label: `（运行时态检查不可用：${String(err?.message ?? err)}）`, fix: '' })
+  }
+
 
   // 网络探活：worker 且 hubUrl 合法时试一把 TCP
   if (role === 'worker' && config.hubUrl) {

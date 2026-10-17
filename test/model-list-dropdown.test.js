@@ -191,7 +191,10 @@ test('#27-4：remote_nodes 的 output schema 声明了 models', () => {
 test('#27-4：面板渲染 <select>，含"跟随副机默认"与"自定义"回退', () => {
   const i = client.indexOf('提案 #27')
   assert.ok(i >= 0, '面板应有 #27 的注释块')
-  const seg = client.slice(i, i + 4200)
+  // ⚠ 窗口从 4200 放宽到 8000：加了 modelCustom 开关（v0.9.0 审查 M2 修复）
+  // 后这段代码变长了，原窗口会把后面几行的断言取样截断 —— 断言本身没失效，
+  // 是取样范围不够（这类"窗口取样"断言很容易在改动后假失败，记一笔）。
+  const seg = client.slice(i, i + 8000)
 
   assert.match(seg, /h\('select'/, '应有 <select>')
   assert.match(seg, /跟随副机默认/, '第一项应是"跟随副机默认"')
@@ -201,6 +204,22 @@ test('#27-4：面板渲染 <select>，含"跟随副机默认"与"自定义"回�
   assert.match(seg, /没有清单|hasList\s*\n?\s*\?/, '没清单应退回文本框（向后兼容旧副机）')
   // 多节点时带节点名后缀
   assert.match(seg, /· ' \+ o\.nodeId|' · ' \+ o\.nodeId/, '多节点时选项应带节点名')
+})
+
+test('#27-4：选「自定义…」必须真的展开文本框（v0.9.0 审查 M2）', () => {
+  // 原实现靠 `fv.model === '__custom__'` 判定，但表单里存的是**真实模型名**
+  // （或空串），从来不是字面量 '__custom__' —— 于是选「自定义…」后
+  // select 的 value 弹回原选项，文本框永远不出现（先有鸡才能进自定义态）。
+  //
+  // 修法：独立布尔 state `modelCustom` 表达"用户主动选了自定义"，
+  // isCustom = modelCustom || (model 非空且不在清单里)。
+  const i = client.indexOf('提案 #27')
+  const seg = client.slice(i, i + 8000)
+
+  assert.match(seg, /modelCustom/, '应有独立的 modelCustom 开关')
+  assert.match(seg, /isCustom = modelCustom \|\|/, 'isCustom 必须把 modelCustom 算进去')
+  assert.match(seg, /if \(v === '__custom__'\)[\s\S]{0,300}?setModelCustom\(true\)/, '选自定义应置开关')
+  assert.match(seg, /setModelCustom\(false\)/, '选具体值应关闭开关')
 })
 
 /* ═══════════════ 安全：不得泄露凭证 ═══════════════ */
