@@ -30,7 +30,7 @@
 
 | | |
 |---|---|
-| **状态** | 0.3.0 —— 主机侧端到端可用；真实运行时拨入已实测（独立进程 worker → 正在运行的 DSH 桌面 hub，见 [KNOWN-ISSUES §8](KNOWN-ISSUES.md)）；`exec` 与 `agent` 双链路均已在两台真机上验证通过 |
+| **状态** | 0.4.0 —— 主机侧端到端可用；真实运行时拨入已实测（独立进程 worker → 正在运行的 DSH 桌面 hub，见 [KNOWN-ISSUES §8](KNOWN-ISSUES.md)）；`exec` 与 `agent` 双链路均已在两台真机上验证通过 |
 | **DSH** | 桌面版 / CLI，0.2.0-rc.2 验证 |
 | **平台** | Windows（全量验证）· Linux / macOS（CI 覆盖）|
 | **依赖** | **零外部 npm 依赖** —— 只用 `node:` 内置模块 |

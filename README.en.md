@@ -32,7 +32,7 @@ explicitly pull them.
 
 | | |
 |---|---|
-| **Status** | 0.3.0 —— hub side end-to-end usable; real-runtime dial-in verified (standalone worker process → running DSH desktop hub, see [KNOWN-ISSUES §8](KNOWN-ISSUES.md)); both `exec` and `agent` paths verified on two real machines |
+| **Status** | 0.4.0 —— hub side end-to-end usable; real-runtime dial-in verified (standalone worker process → running DSH desktop hub, see [KNOWN-ISSUES §8](KNOWN-ISSUES.md)); both `exec` and `agent` paths verified on two real machines |
 | **DSH** | Desktop / CLI, verified on 0.2.0-rc.2 |
 | **Platforms** | Windows (fully verified) · Linux / macOS (CI covered) |
 | **Dependencies** | **Zero external npm dependencies** —— `node:` built-ins only |
