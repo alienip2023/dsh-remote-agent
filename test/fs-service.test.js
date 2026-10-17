@@ -216,8 +216,10 @@ test('fs-service tree：深度/条目上限/denyPaths/链接不深入', (t) => {
   const flat = JSON.stringify(r.items)
   assert.equal(flat.includes('leaf.txt'), false, 'depth=2 不应扫到第 4 层文件')
   assert.ok(r.entries <= TREE_MAX_ENTRIES)
-  // denyPaths
-  assert.equal(flat.includes('secret'), false)
+  // denyPaths：目录 secret 本身不得出现。⚠ 不能用裸 includes('secret') ——
+  // Linux 上 link-to-secret（符号链接名含 "secret"）会合法地出现在树里，
+  // Windows 上链接常因权限创建失败，裸匹配会假绿（CI ubuntu 抓到）。
+  assert.equal(flat.includes('"name":"secret"'), false)
   // 条目上限截断
   const r2 = svc.tree({ path: root, depth: 6, maxEntries: 5 })
   assert.equal(r2.truncated, true)
