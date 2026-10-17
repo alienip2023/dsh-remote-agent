@@ -799,6 +799,38 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     'scripts/check-doc-drift.mjs 断言 65（`\\s` 必须带反斜杠，否则脚本崩）')
 }
 
+/* ── 73~74. 队列残余风险的两条防线（#26-4 / #26-5，2026-10-17）──
+ *
+ * 背景：副机的 `maxConcurrent=2` 被两条卡住的 exec 占满后，后续任务全部排队。
+ * 排查时发现两个让问题"不可见/不可控"的缺陷：
+ *
+ *   #26-4 面板只显示 `running: 2` 这个数字 —— 看不到是哪两条、在跑什么、
+ *         跑了多久。用户只知道"卡了"，没有任何可操作的东西。
+ *   #26-5 `cancel` 只置 AbortSignal，没进 `Promise.race` —— agent 循环
+ *         不监听它，任务继续跑到自然结束，最终落成 **completed**（不是
+ *         aborted）。用户以为取消成功，实际白跑一遍还烧了额度。
+ *
+ * 这两条都是"静默失效"型：没有报错、没有日志、行为看起来"正常"。
+ * 所以用断言把修复钉住。
+ */
+{
+  const panelClient = read('lib/client.js')
+  check('73', '#26-4 面板任务列表按状态分组，运行中置顶且显示已跑时长',
+    /ACTIVE_STATUSES/.test(panelClient)
+    && /activeTasks/.test(panelClient)
+    && /运行中（/.test(panelClient)
+    && /已跑 /.test(panelClient),
+    'lib/client.js（ACTIVE_STATUSES + 运行中分组 + 已跑时长）')
+
+  const runnerSrc = read('lib/node/runner.js')
+  check('74', '#26-5 agent 取消真打断：abortPromise 参与 race，ok 排除 aborted',
+    /const abortPromise/.test(runnerSrc)
+    && /abortPromise,/.test(runnerSrc)
+    && /ok:\s*!timedOut\s*&&\s*!aborted/.test(runnerSrc)
+    && /if\s*\(!timedOut\)\s*aborted\s*=\s*true/.test(runnerSrc),
+    'lib/node/runner.js（abortPromise 进 race + ok 排除 aborted + 超时不误标）')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

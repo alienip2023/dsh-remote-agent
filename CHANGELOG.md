@@ -9,6 +9,37 @@
 
 ---
 
+## [未发布]
+
+### 修复：队列残余风险的两处静默失效（#26-4 / #26-5）
+
+2026-10-17 实测：副机 `maxConcurrent=2` 被两条卡住的 exec 占满后，后续任务
+全部排队。排查时暴露两个让问题**不可见、不可控**的缺陷 —— 都是"没有报错、
+行为看起来正常"的静默失效型。
+
+- **#26-4 面板"运行中"分组**：此前面板只有一个数字（`running: 2`），
+  用户看不到**是哪两条、在跑什么、跑了多久**。现在任务列表按状态分组，
+  运行中（含 queued / pending_approval）置顶，每条显示 `已跑 N`
+  （由 `startedAt` 与当前时间算差）—— 这是判断"是不是卡住了"的唯一线索。
+  其余任务归入"已完成 / 已结束"，保持原顺序。
+
+- **#26-5 agent 取消真打断**：`InProcessRunner.run` 等 agent 停稳用的是
+  `Promise.race([agent.whenIdle(), timeoutPromise])` —— **取消信号不在里面**。
+  而 `cancel()` 做的是 `agent.cancel()` + `controller.abort()`：abort 只是
+  置了个标志，没有任何人在 await 它；DSH 的 agent 循环也不监听外部
+  AbortSignal。后果：hub 发 `task/cancel` → `remote_cancel` 返回
+  `requested: true` → 任务**一直 running 到 agent 自己跑完** → 最终落成
+  **completed**（不是 aborted）。用户以为取消成功，实际白跑一遍还烧了额度。
+
+  修法：把 abort 做成可 race 的 promise（触发即 resolve），并让返回值的
+  `ok` 排除 `aborted`（`ok: !timedOut && !aborted`）。两个语义细节同时钉住：
+  超时触发的 abort **不**改写成 aborted（超时 ≠ 用户取消，下游据此外报不同
+  错误码）；`finally` 里 `handle.dispose()` 收掉 agent，避免取消后泄漏。
+
+测试：`test/agent-cancel-abort.test.js` 8 条（race 含 abortPromise / ok 排除
+aborted / 超时不误标 / cancel 双动作 / finally dispose / engine 映射顺序）；
+doc-drift 新增 73、74 两条锚点。
+
 ## [0.7.0] - 2026-10-17
 
 ### 功能：模型自述 + headless 指定模型派发前拦截（提案 #27）
