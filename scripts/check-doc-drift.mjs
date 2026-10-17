@@ -417,9 +417,24 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
     /五分钟上手/.test(rootReadme) && /--doctor/.test(rootReadme) && /dsh-remote-setup/.test(rootReadme),
     'README.md 五分钟上手一节')
   check('37', 'package.json 声明了 dsh-remote-setup 的 bin 入口且文件存在',
-    pkg.bin?.['dsh-remote-setup'] === './bin/dsh-remote-setup.js'
-      && fs.existsSync(path.join(ROOT, 'bin', 'dsh-remote-setup.js')),
-    'package.json bin + bin/dsh-remote-setup.js')
+    // ⚠ 路径写法：**规范形态是不带 `./` 前缀**。
+    //
+    // npm 对 `bin` 里的 `./bin/x.js` 会给出警告并在发布时**自动移除前缀**：
+    //   npm warn publish "bin[dsh-remote-setup]" script name bin/dsh-remote-setup.js
+    //                      was invalid and removed
+    // 那条 warn 的措辞容易误读成"这条 bin 被删了"，实际是"前缀被修正了" ——
+    // 但它说明**写 `./` 是非规范形态**，应当避免。
+    //
+    // 这条断言原本写死 `'./bin/dsh-remote-setup.js'`，等于在保护一个
+    // npm 会改写掉的写法。现在接受规范形态（无前缀），并容忍带前缀的历史
+    // 配置 —— `npm pkg fix` 会把带前缀的改成规范形态。
+    (() => {
+      const v = pkg.bin?.['dsh-remote-setup']
+      if (typeof v !== 'string') return false
+      return v.replace(/^\.\//, '') === 'bin/dsh-remote-setup.js'
+        && fs.existsSync(path.join(ROOT, 'bin', 'dsh-remote-setup.js'))
+    })(),
+    'package.json bin（规范形态：不带 ./ 前缀）+ bin/dsh-remote-setup.js')
   check('38', '生成器替用户填好 inject: []（worker 片段必须自带）',
     /inject:\s*\[\]/.test(setupLib),
     'lib/setup.js buildWorkerYaml')
