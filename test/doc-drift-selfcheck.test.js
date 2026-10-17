@@ -46,6 +46,14 @@ function makeCopy(t) {
     'lib/protocol.js',
     'lib/glob.js',
     'lib/relay.js',
+    // 开箱即用断言（80）读 lib/setup-routes.js —— **又是 lib/ 根下新文件**。
+    // 这个脆弱点已经踩到第七次了，症状每次都一样：整批自检 ✖（不是断言
+    // 失效，是副本里根本没这个文件 → read() 抛 ENOENT → 脚本 exit 1）。
+    //
+    // 规矩（写在这里防下一次）：**只要 doc-drift 里新增一个 read() 目标，
+    // 就必须同步本清单**。lib/hub 与 lib/node 是整目录复制的，所以那两个
+    // 目录下的新文件不用管；lib/ 根下的必须逐条列。
+    'lib/setup-routes.js',
     // 降级链断言（50~54）读 deploy/relay-vps/ 的四个模板文件 ——
     // 漏了整个目录，自检会整批 ENOENT（该脆弱点第三次踩到）。
     'deploy',

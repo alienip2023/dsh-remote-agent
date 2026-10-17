@@ -39,14 +39,45 @@ const patch = read('cordis.patch.yml')
 
 /* ─────────────── 1. role 默认必须是"未配置" ─────────────── */
 
-test('role 的 schema 允许空值且默认空（不再默认 hub）', () => {
+test('role 的 schema：允许空值 + 允许 auto + 默认 auto（不写死 hub）', () => {
   const code = stripComments(indexSrc)
-  // 必须允许空字符串
+  // 必须允许空字符串（用户主动清空 → 显示引导）
   assert.match(code, /z\.const\(''\)/, "role 的 union 必须包含 z.const('')")
-  // 默认值必须是空 —— 不能是 'hub'
-  const m = /role:\s*z[\s\S]{0,400}?\.default\((['"])(.*?)\1\)/.exec(code)
+  // 必须允许 auto（2026-10-17：按 hubUrl 推断角色，"开箱即用"的落点）
+  assert.match(code, /z\.const\('auto'\)/, "role 的 union 必须包含 z.const('auto')")
+  const m = /role:\s*z[\s\S]{0,900}?\.default\((['"])(.*?)\1\)/.exec(code)
   assert.ok(m, '应能解析出 role 的 default')
-  assert.equal(m[2], '', `role 的默认值必须是空字符串（实际 ${JSON.stringify(m[2])}）—— 默认 hub 会让副机装完以 hub 身份启动`)
+  assert.equal(
+    m[2],
+    'auto',
+    `role 的默认值必须是 auto（实际 ${JSON.stringify(m[2])}）——`
+    + '默认 hub 会让副机装完以 hub 身份启动（注册无鉴权端点）；'
+    + '默认空又让两台机器都要操作一次，不是开箱即用。auto 兼顾两者。',
+  )
+})
+
+test('role auto：按 hubUrl 推断（没 hubUrl=hub，有 hubUrl=worker）', () => {
+  const code = stripComments(indexSrc)
+  const i = code.indexOf('export function resolveRoleDetail')
+  assert.ok(i >= 0, '应存在 resolveRoleDetail')
+  let depth = 0
+  let end = -1
+  for (let k = code.indexOf('{', i); k < code.length; k += 1) {
+    if (code[k] === '{') depth += 1
+    else if (code[k] === '}') {
+      depth -= 1
+      if (depth === 0) { end = k + 1; break }
+    }
+  }
+  assert.ok(end > i, '应能取出函数体')
+  const body = code.slice(i, end)
+
+  assert.match(body, /ROLE\.AUTO|'auto'/, 'auto 分支必须存在')
+  assert.match(body, /config\.hubUrl/, 'auto 推断必须读 hubUrl')
+  assert.match(body, /return \{ role: ROLE\.WORKER/, '有 hubUrl 时应推断为 worker')
+  assert.match(body, /return \{ role: ROLE\.HUB/, '没 hubUrl 时应推断为 hub')
+  // 推断结果必须可追溯（面板要显示"为什么是这个角色"）
+  assert.match(body, /inferred/, '推断结果应带 inferred 标记')
 })
 
 test('resolveRoleDetail：未配置返回 unconfigured，且**不回退 hub**', () => {
@@ -300,10 +331,24 @@ test('setup state 如实报告 configured（面板据此区分引导/切换）',
   const code = stripComments(setupRoutes)
   const i = code.indexOf('/state`')
   assert.ok(i >= 0, '应有 state 端点')
-  const seg = code.slice(i, i + 900)
-  assert.match(seg, /configured:\s*valid/, 'configured 应由 role 是否有效决定')
-  // 判据必须与 lib/index.js 的 resolveRoleDetail 一致（三个合法值）
-  assert.match(seg, /role === 'hub' \|\| role === 'worker' \|\| role === 'both'/, '判据应与 resolveRoleDetail 一致')
+  const seg = code.slice(i, i + 1200)
+
+  // 2026-10-17 改：判据不再自己写一遍 `role === 'hub' || ...`，而是**复用**
+  // resolveRoleDetail —— 两处判据不一致会造成最难排查的撕裂
+  // （面板说"未配置"、插件实际在跑 hub，v0.7.0 踩过）。
+  assert.match(seg, /resolveRoleDetail\(config\)/, 'configured 必须复用 resolveRoleDetail 的判据')
+
+  // auto 也算"已选择"（它是个明确的工作模式，不是"还没配"）
+  assert.match(seg, /role === 'auto'/, "auto 应算已配置 —— 否则主机装完会被要求走引导")
+
+  // 必须透出"推断出的生效角色"，否则面板无法告诉用户"你现在是 hub 还是 worker"
+  assert.match(seg, /effectiveRole:/, '应回 effectiveRole（auto 时的推断结果）')
+  assert.match(seg, /inferred:/, '应回 inferred（推断依据，便于排查）')
+
+  // 回显字段必须仍在（切换角色时"改一个字段"而不是从头填）
+  for (const k of ['nodeId', 'transportMode', 'hubUrl', 'relayUrl', 'roots']) {
+    assert.match(seg, new RegExp(`${k}:`), `current 应回显 ${k}`)
+  }
 })
 
 test('client：设置区有「切换角色」按钮', () => {

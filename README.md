@@ -110,7 +110,7 @@ node bin/dsh-remote-setup.js --doctor 你的配置.yml
 
 ## 安装
 
-### 主机（hub）
+### 主机（hub）—— 装完即用
 
 ```bash
 # 通过 DSH 插件安装器（GitHub 源）
@@ -122,42 +122,58 @@ npm install -g dsh-remote-agent
 
 或在 DSH 的插件对话框里填 `github:zbzbhs/dsh-remote-agent`。
 
-装完在 `cordis.patch.yml` 里确认这一行存在（包内 patch 会自动插入）：
+**装完重启 DSH 就能用** —— 不需要改任何配置：
+
+- 包内 patch 默认 `role: auto`。**没配 `hubUrl` 就是主机**，自动生效。
+- 包内 patch 把 `webserver` 绑到 `0.0.0.0:19387`，**副机才能连上**
+  （DSH 默认只绑 `127.0.0.1`，那样副机永远连不上且主机侧毫无异常）。
+- 打开 Web 面板「远程同事」，点「副机接入」生成配对码，发给副机。
+
+> **安全披露**：绑 `0.0.0.0` 意味着 **DSH 的整个 Web GUI 也能被局域网访问**
+> （不只是本插件的节点端点）。DSH 自带 Host/Origin 围栏 + 浏览器 cookie 鉴权，
+> 但暴露面确实变大了。如果你不需要跨机访问，可以在 profile 的
+> `cordis.patch.yml` 里覆盖回 `127.0.0.1` —— 但那样副机就连不上，
+> 请改用 [中继模式](profiles/README.md)。
+>
+> 面板的「体检」按钮会明确告诉你当前绑在哪（面板加载时也会自动体检一次）。
+
+### 副机（worker）—— 贴个配对码就行
+
+**同一份包**，装完重启 DSH，然后：
+
+1. 打开 Web 面板「远程同事」
+2. 把主机生成的 `dshra1://…` 整行**粘进「配对码」框**（自动解析地址与 token）
+3. 工作区已预填（Windows `D:\work`，其他 `~/work`），**目录不存在会自动创建**
+4. 点「确认，写入配置」→ 重启 DSH
+
+**为什么贴完就自动变副机**：`role` 默认 `auto`，判据是"配了 `hubUrl` 就是副机"。
+配对码展开后必然产出 `hubUrl`，所以贴码 = 自动切到 worker。
+
+**节点 ID 不用填** —— 默认取主机名。想自定义就点「默认用主机名（点此自定义）」展开。
+
+如果你想手工写 YAML（不推荐，但可以）：
 
 ```yaml
 - id: remote-agent
   name: dsh-remote-agent
-  inject: ['webServer', 'tools', 'systemPrompt']
-  config:
-    role: hub
-```
-
-### 副机（worker）
-
-**同一份包**，但配置不同 —— 关键是**必须加 `inject: []`**：
-
-```yaml
-- id: remote-agent
-  name: dsh-remote-agent
-  inject: []                    # ← 副机必加，否则永不激活（见下方说明）
+  inject: ['tools', 'agentLoop', 'sessions']   # ← 副机必须用这三个
   config:
     role: worker
-    nodeId: slave-pc
-    transportMode: direct
-    hubUrl: 'ws://<主机地址>:19387/api/remote-agent/node'
-    token: '<与主机 nodeToken 相同，或留空>'
-    roots: ['D:\work']          # ← 改成副机真实存在的目录
+    pair: 'dshra1://eyJ2IjoxLC…'   # ← 主机面板输出的整行
+    roots: ['D:\work']             # ← 副机真实存在的目录（会自动创建）
 ```
 
-**嫌抄地址容易错？用配对码** —— 主机向导会输出一行 `dshra1://…`（内含
-地址与 token），副机配置里 `transportMode/hubUrl/token` 三行换成一行：
-
-```yaml
-  config:
-    role: worker
-    pair: 'dshra1://eyJ2IjoxLC…'   # ← 主机向导输出的整行
-    roots: ['D:\work']
-```
+> **为什么副机的 `inject` 和主机不同**
+>
+> `inject` 决定**这个插件能看见哪些 DSH 服务**，而 agent 的 ctx 继承插件
+> 的依赖声明 —— 少了 `tools`，副机的 agent 就**没有任何 shell/文件工具**，
+> 任务会"跑完了但什么都没干"。
+>
+> - hub 需要 `webServer`（注册路由）+ `tools` + `systemPrompt`
+> - worker 需要 `tools` + `agentLoop` + `sessions`（起 agent 会话）
+>
+> 面板的「切换角色」会自动写对这一个字段，**不用自己记**。
+> （历史坑：早期文档教用户写 `inject: []`，那是错的 —— 会导致 agent 无工具。）
 
 > **配对码的两条规矩**
 >
@@ -175,14 +191,6 @@ npm install -g dsh-remote-agent
 > `pinnedHubFingerprint: hubfp1-…` 显式钉住；之后指纹不匹配 = 拒绝上线并
 > 停止重连（确认主动换 hub 后删 `hub-pin.json` 重启即可重新钉住）。
 > 详见 [SECURITY.md](SECURITY.md) 检查清单第 7 条。
-
-> **为什么副机要写 `inject: []`**
->
-> 包内 `cordis.patch.yml` 给这一行声明了
-> `inject: ['webServer','tools','systemPrompt']` —— 那是 **hub 需要的服务**。
-> 副机 profile 里**没有**这些服务，不清空的话这一行会一直停在 **PENDING**
-> **永远不激活**，副机也就永远不拨入。loader 按 id 覆盖，所以写 `inject: []`
-> 就覆盖掉了包内的声明。
 
 **接入路径**（双方都在 NAT 后 / 一方有公网 / 隧道）见
 **[profiles/README.md](profiles/README.md)** —— 那里有每条路径的配置片段与验证命令，

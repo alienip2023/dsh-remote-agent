@@ -303,9 +303,15 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
   check('29', 'profiles/worker.cordis.yml 里有 inject: []',
     /^\s*inject:\s*\[\]\s*$/m.test(workerProfile),
     'profiles/worker.cordis.yml（副机不清空 inject 会永远 PENDING）')
-  check('30', 'README 说明了副机为什么要写 inject: []',
-    /inject:\s*\[\]/.test(rootReadme) && /PENDING/.test(rootReadme),
-    'README.md（副机配置一节）')
+  // 2026-10-17 改：原断言锁的是 `inject: []`（README 教用户写这个）——
+  // **那是错的**：副机 agent 的 ctx 继承插件的依赖声明，`inject: []` 会让
+  // agent 没有任何 shell/文件工具，任务"跑完了但什么都没干"（实测踩过）。
+  // 正确写法是 worker 三件套。断言跟着改，否则文档会退回错误建议。
+  check('30', 'README 说明了副机 inject 的正确写法（tools/agentLoop/sessions，不是 []）',
+    /inject:\s*\[[^\]]*agentLoop[^\]]*\]/.test(rootReadme)
+    && /agentLoop/.test(rootReadme)
+    && /没有[^\n]*工具|无[^\n]*工具/.test(rootReadme),
+    'README.md（副机配置一节：inject 三件套 + 缺了会怎样的说明）')
   check('31', '包内 cordis.patch.yml 声明了 hub 需要的 inject',
     /inject:\s*\[[^\]]*webServer[^\]]*\]/.test(read('cordis.patch.yml')),
     'cordis.patch.yml')
@@ -921,6 +927,51 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     && /fix:/.test(envLib)
     && /不会代你下载/.test(envLib),
     'lib/env-check.js（可达性/inject/roots/role + fix + 不代下载边界）')
+}
+
+/* ── 79~80. 开箱即用（2026-10-17）──
+ *
+ * 产品标准：用户装完就该能用，不该读文档、改 YAML、猜字段。
+ *
+ * 此前三道门槛：
+ *   1. `role` 默认 '' → 两台机器都要操作一次
+ *   2. `webserver` 没绑 0.0.0.0 → 副机永远连不上（且完全静默）
+ *   3. 副机表单 4 个字段 → 小白不知道节点 ID / 工作区填什么
+ *
+ * 核心设计：`role` 默认 **auto**，按 `hubUrl` 推断。
+ *   · 默认 hub → 副机装完以 hub 身份启动，注册无鉴权端点（**攻击面**）
+ *   · 默认 ''  → 两台都要操作，不是开箱即用
+ *   · 默认 auto → 主机零操作、副机贴完配对码零操作，且不给副机开错端点
+ */
+{
+  const indexSrc = read('lib/index.js')
+  const patchSrc = read('cordis.patch.yml')
+  const clientSrc3 = read('lib/client.js')
+  const setupSrc = read('lib/setup-routes.js')
+
+  check('79', '开箱即用：role 默认 auto + 包内 patch 绑 0.0.0.0:19387',
+    /\.default\('auto'\)/.test(indexSrc)
+    && /ROLE\.AUTO/.test(indexSrc)
+    && /config\.hubUrl/.test(indexSrc)
+    // 包内 patch 必须 override webserver（否则副机连不上）
+    && /^- id: webserver$/m.test(patchSrc)
+    && /host:\s*'0\.0\.0\.0'/.test(patchSrc)
+    && /port:\s*19387/.test(patchSrc)
+    // 必须披露安全影响
+    && /暴露/.test(patchSrc),
+    'lib/index.js（auto 推断）+ cordis.patch.yml（webserver 0.0.0.0:19387 + 安全披露）')
+
+  check('80', '开箱即用：副机表单简化 + 工作区自动创建 + 首次自动体检',
+    // 工作区预填
+    /function defaultRootsHint/.test(clientSrc3)
+    // 节点 ID 折叠
+    && /默认用主机名/.test(clientSrc3)
+    // 首次自动体检
+    && /autoChecked/.test(clientSrc3)
+    // 服务端自动建目录
+    && /mkdirSync\(r, \{ recursive: true \}\)/.test(setupSrc)
+    && /warnings: applyWarnings/.test(setupSrc),
+    'lib/client.js（预填/折叠/自动体检）+ lib/setup-routes.js（自动建目录）')
 }
 
 /* ── 输出 ── */
