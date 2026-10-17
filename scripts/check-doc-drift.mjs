@@ -1052,6 +1052,52 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     + ` vs README.md（声明 ${declared === null ? '未找到' : declared} 个）`)
 }
 
+/* ── 84~85. v0.9.0 审查的两个 High：**接线断链**（2026-10-17）──
+ *
+ * 这两个 bug 的共同点：**模块本身完全正确，装配进系统时接线断了**。
+ *
+ *   H1  env-check.js 的 24 条单测全绿，但 /env-check 路由传的是**原始
+ *       config.role**（'auto'）→ 五项检查全跳过、两项误报 → 对 100% 默认
+ *       安装用户失效，且首次自动体检让它在每个新用户面前弹出。
+ *   H2  share-service.js 的 17 条单测全绿，但面板恒发 dir: '' → 副机按设计
+ *       拒绝 → SMB 共享的唯一主动作 100% 失败。
+ *
+ * 单测证明不了"模块被装配进系统时的形状"。这两条断言锚在接线处。
+ */
+{
+  const uiSrc4 = read('lib/hub/ui-routes.js')
+  const clientSrc5 = read('lib/client.js')
+  const setupBin = read('bin/dsh-remote-setup.js')
+
+  check('84', 'env-check 路由传解析后角色（v0.9.0 审查 H1：否则 auto 判成非 hub）',
+    // 反例：把原始 config.role 直接传给 envChecks
+    (() => {
+      const i = uiSrc4.indexOf('/env-check`')
+      if (i < 0) return false
+      const seg = uiSrc4.slice(i, i + 900)
+      // 不得出现 `role: typeof config.role === 'string' ? config.role`
+      if (/role:\s*typeof config\.role === 'string'\s*\?\s*config\.role/.test(seg)) return false
+      // 必须用 resolveRole（或字面量 'hub'）
+      return /resolveRole/.test(seg)
+    })(),
+    'lib/hub/ui-routes.js（role: resolveRole(config) 而非原始 config.role）')
+
+  check('85', 'SMB 面板发真实 dir + CLI doctor 有 loopback 检查（H2 / M1）',
+    // H2：不得写死 dir: ''
+    (() => {
+      const i = clientSrc5.indexOf('function doPlan()')
+      if (i < 0) return false
+      const seg = clientSrc5.slice(i, i + 900)
+      return !/dir:\s*''/.test(seg) && /dir:\s*shareDir/.test(seg)
+    })()
+    // H2：必须有目录选择 UI（数据源 node.roots）
+    && /nodeRoots/.test(clientSrc5)
+    // M1：CLI 必须调 envChecks（否则没有 loopback 诊断）
+    && /envChecks/.test(setupBin)
+    && /isLoopbackOrigin/.test(setupBin),
+    'lib/client.js（dir: shareDir + nodeRoots UI）+ bin/dsh-remote-setup.js（envChecks）')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {
