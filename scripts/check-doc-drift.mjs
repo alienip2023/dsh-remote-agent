@@ -974,6 +974,56 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     'lib/client.js（预填/折叠/自动体检）+ lib/setup-routes.js（自动建目录）')
 }
 
+/* ── 81~82. 工作区 SMB 共享（2026-10-17）──
+ *
+ * 用户需求：想用本地 IDE 直接打开副机的项目目录 —— 唯一现实路径是把工作区
+ * 通过 SMB 共享出去，主机 `net use X: \\副机\dsh-work` 映射成盘符。
+ *
+ * ⚠ **这是本插件唯一主动放宽安全边界的功能**：
+ *   · roots / denyPaths 全部失效（Windows 内核直读，插件拦不住）
+ *   · 「清单先于字节」失效（.env / .git 密钥 / 中间产物全部可见）
+ *   · 新增凭证面（主机需要副机 Windows 账号）
+ *
+ * 所以产品要求（用户确认）：二次确认 + 只读/读写两选项 + 不代执行（需管理员）。
+ * 这两条断言把安全约束钉住 —— 它们比功能本身更重要。
+ */
+{
+  const shareSvc = read('lib/node/share-service.js')
+  const nodeIdx2 = read('lib/node/index.js')
+  const uiSrc3 = read('lib/hub/ui-routes.js')
+  const clientSrc4 = read('lib/client.js')
+  const transportSrc = read('lib/node/transport.js')
+
+  check('81', '工作区共享：协议帧 + E2E 强制 + 独立 pending 表 + 副机 handler 都在',
+    /SHARE_REQ: 'share\/req'/.test(read('lib/protocol.js'))
+    && /SHARE_RES: 'share\/res'/.test(read('lib/protocol.js'))
+    // 工作区绝对路径不许明文过中继
+    && /HUB_TO_NODE\.SHARE_REQ/.test(transportSrc)
+    // 两张 pending 表不能混（混了超时归因变模糊）
+    && /this\.sharePending = new Map\(\)/.test(read('lib/hub/node-registry.js'))
+    && /shareCancelForNode/.test(read('lib/hub/node-registry.js'))
+    && /handleShareRes/.test(read('lib/hub/registry-ingest.js'))
+    && /function handleShareReq/.test(nodeIdx2),
+    'protocol.js + transport.js + node-registry.js + registry-ingest.js + node/index.js')
+
+  check('82', '工作区共享安全：二次确认硬要求 + 只读默认 + 不代执行',
+    // 二次确认是硬要求（缺 confirm 必须 400，不能有默认通过）
+    /body\?\.confirm !== 'yes'/.test(uiSrc3)
+    && /confirm-required/.test(uiSrc3)
+    // 只读默认（最小权限）
+    && /React\.useState\('read'\)/.test(clientSrc4)
+    && /disabled: busy \|\| !ack/.test(clientSrc4)
+    // 读写用 -ChangeAccess，不用 -FullAccess（后者会把 ACL 也交出去）
+    && /ChangeAccess/.test(shareSvc)
+    && !/'-FullAccess'/.test(shareSvc)
+    // 不代执行（需管理员，Node 提权失败比让用户手动跑难排查）
+    && !/spawn.*New-SmbShare/.test(nodeIdx2)
+    && /admin: isAdmin\(\)/.test(nodeIdx2)
+    // 共享目录必须过 roots 边界
+    && /resolveWorkspace\(/.test(nodeIdx2),
+    'ui-routes.js（二次确认）+ client.js（勾选框/只读默认）+ share-service.js + node/index.js')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

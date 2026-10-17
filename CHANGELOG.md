@@ -11,6 +11,71 @@
 
 ## [未发布]
 
+### 功能：工作区共享（SMB）—— 用本地 IDE 打开副机的文件
+
+用户需求：想用本地 IDE 直接打开副机的项目目录。
+
+实现方式：把副机的工作区通过 Windows SMB 共享出去，主机
+`net use X: \\副机\dsh-work-...` 映射成盘符。
+
+#### ⚠ 这是本插件**唯一主动放宽安全边界**的功能
+
+开启后：
+- `roots` / `denyPaths` 全部失效（Windows 内核直读，插件拦不住）
+- 「清单先于字节」失效（中间产物、日志、`.env`、`.git` 密钥全部可见）
+- 新增凭证面（主机需要副机的 Windows 账号）
+
+所以按用户要求做了三重防护：
+
+1. **二次确认**（硬要求）—— `POST /share` 缺 `confirm: 'yes'` 直接 400，
+   没有默认通过的分支；面板上必须勾选「我知道风险」按钮才可点
+2. **只读 / 读写两选项**，默认**只读**（最小权限）；读写用 `-ChangeAccess`
+   而非 `-FullAccess`（后者会把共享 ACL 也交出去，主机能改权限）
+3. **不代执行** —— 只生成可复制的命令，执行由用户在管理员 PowerShell 里做
+
+#### 为什么不代执行（重要设计决策）
+
+`New-SmbShare` 需要管理员，而 DSH 通常以普通用户运行。Node 里提权的
+失败表现（静默失败 / 被安全软件拦 / 权限半生效）比让用户手动跑一条命令
+难排查得多。所以 `handleShareReq` 只做三件事：`probe`（探测管理员状态
+与已有共享）、`plan`（生成共享 + 映射命令）、`unshare-plan`（生成卸载命令）。
+
+#### 实现要点
+
+- **协议**：新增 `SHARE_REQ` / `SHARE_RES` 帧，与 `fs/req` 同款 RPC 模式
+- **E2E 强制**：`SHARE_REQ` 进 `E2E_REQUIRED_TYPES` —— 帧里含工作区
+  **绝对路径**（暴露副机目录结构），不许明文过中继
+- **独立 pending 表**：`sharePending` 与 `fsPending` 刻意分开 —— 混用会让
+  超时归因变模糊（一条 share 超时被记成 fs-timeout，排查方向直接跑偏）
+- **共享名稳定哈希**：同一目录反复开关共享名不变（不留孤儿共享），固定
+  `dsh-work-` 前缀便于识别与清理（不会误删用户的其它共享）
+- **共享目录过 roots 边界**：`plan` 的目录必须经 `resolveWorkspace`
+  （realpath + roots 前缀 + denyPaths），与 fs 工具同一条规则
+
+#### 文档
+
+新增 [docs/workspace-share.md](docs/workspace-share.md)：完整风险披露、
+三步用法（面板开启 → 副机管理员执行 → 主机映射）、关闭方法、常见问题
+（连不上怎么查、为什么共享名是怪名字、能不能共享整个盘、与 relay 的关系）。
+
+#### 测试
+
+- `test/share-service.test.js` **17 条**：共享名稳定性、只读/读写映射
+  （含"不得用 FullAccess"）、单引号转义防注入、探测不抛、跨平台安全
+- `test/share-integration.test.js` **12 条**：帧已声明、E2E 强制、
+  pending 表独立、断连 fail-fast、**二次确认是硬要求**、只读默认、
+  面板勾选框、不代执行、目录过 roots 边界
+
+doc-drift 新增 81（接线完整）、82（安全约束）。
+
+```
+packaging   4 项
+doc-drift   117/117
+diag:inject 11 项
+tests       926（925 pass / 0 fail / 1 skip）
+lint        干净
+```
+
 ### 开箱即用：装完就能用，不用读文档
 
 用户标准（2026-10-17）："我希望是小白可用的，是开箱即用的"。
