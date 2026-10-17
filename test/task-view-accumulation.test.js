@@ -99,8 +99,13 @@ test('createTask：错误信息要能区分"在跑的满了"与"历史多了"', 
 
 test('applySync：必须自动清理超过保留期的终态视图', () => {
   const code = stripComments(registryIngest)
-  const i = code.indexOf('applySync(')
-  assert.ok(i >= 0, '应存在 applySync')
+  // ⚠ 必须锚**定义处**（\n + 4 空格缩进的方法签名）：裸 indexOf('applySync(')
+  // 先命中的是帧分发里的调用点 `this.applySync(nodeId, d)`，从那里截固定
+  // 长度窗口 —— 窗口只要大于"调用点到清理逻辑"的行距就能过，而这个距离会
+  // 随 ingest 文件里其他 case 的增删而漂移（2026-10-17 加 RESOURCE 的
+  // queue/defaultModel 上报就把 6000 字符窗口顶爆，断言假挂）。
+  const i = code.indexOf('\n    applySync(nodeId, d) {')
+  assert.ok(i >= 0, '应存在 applySync 定义')
   const seg = code.slice(i, i + 6000)
   assert.match(seg, /taskViewRetainMs/, '应用保留期配置')
   assert.match(seg, /TERMINAL_STATUS\.has\(t\.status\)/, '只清终态')

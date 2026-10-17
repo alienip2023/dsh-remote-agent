@@ -1194,3 +1194,45 @@ test('hub⇄worker e2e（relay）：fs 请求经 E2E，文件内容与路径对�
   assert.equal(tap.leaks(secret), false, '文件内容泄漏到了中继可见的字节流里')
   assert.equal(tap.leaks('secret.txt'), false, '文件名泄漏到了中继可见的字节流里')
 })
+
+test('hub⇄worker e2e：模型自述贯通 + headless 指定模型派发前拦截（提案 #27）', async (t) => {
+  const root = tmpRoot(t)
+  const relay = await startRelay(t)
+  const env = await setup(t, { root, mode: 'relay', relay, resourceIntervalMs: 60 })
+
+  // 等自述帧：e2e worker 无 dsh 上下文 → runnerKind=headless；
+  // ctx.get 恒 undefined → defaultModel 显式 null 上报（清洗后仍 null）
+  await waitFor(() => {
+    const n = env.hub.registry.list().find((x) => x.nodeId === env.nodeId)
+    return n?.runnerKind != null
+  }, { label: 'runner self-report arrives', timeoutMs: 8000 })
+  const n = env.hub.registry.list().find((x) => x.nodeId === env.nodeId)
+  assert.equal(n.runnerKind, 'headless', 'e2e worker 应自述为 headless 后端')
+  assert.equal(n.defaultModel, null, '无 agentDefaultModel 服务时 defaultModel 应为 null')
+
+  // dryRun：无 model → 回显"未指定"，model 字段缺席（null 被 schema 层剥掉）
+  const dry = await env.tool('remote_task')({ goal: 'x', mode: 'agent', workspace: env.wsRoot, dryRun: true })
+  assert.equal(dry.dryRun, true)
+  assert.equal(dry.model, undefined, '无模型可回显时 model 字段应缺席而非 null')
+  assert.match(dry.modelSource ?? '', /未指定/)
+
+  // 手工注入 defaultModel（模拟真副机上报）→ dryRun 回显副机默认
+  const rec = env.hub.registry.getNode(env.nodeId)
+  rec.defaultModel = { provider: 'official', model: 'deepseek-chat' }
+  const dry2 = await env.tool('remote_task')({ goal: 'x', mode: 'agent', workspace: env.wsRoot, dryRun: true })
+  assert.deepEqual(dry2.model, { provider: 'official', model: 'deepseek-chat' })
+  assert.match(dry2.modelSource ?? '', /副机默认/)
+  rec.defaultModel = null
+
+  // headless + agent + 显式 model → 派发前拦截（dryRun 与真实派发同一条
+  // 校验路径；旧链路要等任务跑到副机才失败，浪费一轮往返）
+  await assert.rejects(
+    () => env.tool('remote_task')({ goal: 'x', mode: 'agent', workspace: env.wsRoot, model: { model: 'gpt-4o' }, dryRun: true }),
+    (err) => /headless/.test(String(err?.message)),
+    'headless 节点指定模型应在派发前被拦',
+  )
+
+  // exec 模式不受影响（model 仅 agent 生效）
+  const dryExec = await env.tool('remote_task')({ goal: 'echo hi', mode: 'exec', workspace: env.wsRoot, approval: 'auto', model: { model: 'gpt-4o' }, dryRun: true })
+  assert.equal(dryExec.mode, 'exec')
+})
