@@ -886,6 +886,43 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     'lib/node/index.js readAvailableModels（上报字段恰好 provider/id/name）')
 }
 
+/* ── 77~78. 环境体检（2026-10-17）──
+ *
+ * 这个插件最贵的失败全是**静默**的：
+ *   · webserver 绑 loopback → 副机永远连不上，主机侧毫无异常
+ *   · inject 缺服务 → hub 半死（路由活着但工具全丢）
+ *   · roots 不存在 → 任务全被 workspace-denied 拒绝
+ *
+ * 用户只能猜"地址错了？token 错了？防火墙？"。所以体检必须覆盖这些前置条件、
+ * 每条都给**具体修法**，且命令行与面板共用同一份逻辑（两处不一致更坏）。
+ *
+ * 另外钉住一条产品边界：**不代用户下载第三方软件**（零依赖是核心卖点，
+ * 代下载会让我们变成软件分发方）。
+ */
+{
+  const envLib = read('lib/env-check.js')
+  const uiSrc2 = read('lib/hub/ui-routes.js')
+  const clientSrc2 = read('lib/client.js')
+
+  check('77', '环境体检：共享模块 + 面板路由 + 面板按钮三处都在',
+    /export function envChecks/.test(envLib)
+    && /export function isLoopbackOrigin/.test(envLib)
+    && /export function renderEnvChecks/.test(envLib)
+    && /UI_API_PREFIX\}\/env-check/.test(uiSrc2)
+    && /apiGet\('\/env-check'\)/.test(clientSrc2)
+    && /'体检'/.test(clientSrc2),
+    'lib/env-check.js + ui-routes.js /env-check + client.js 体检按钮')
+
+  check('78', '环境体检：覆盖静默失败项 + 每条带修法 + 不代下载',
+    /'reachability'/.test(envLib)
+    && /'inject'/.test(envLib)
+    && /'roots'/.test(envLib)
+    && /'role'/.test(envLib)
+    && /fix:/.test(envLib)
+    && /不会代你下载/.test(envLib),
+    'lib/env-check.js（可达性/inject/roots/role + fix + 不代下载边界）')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

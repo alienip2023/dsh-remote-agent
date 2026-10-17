@@ -69,6 +69,11 @@ function makeCopy(t) {
     // E2E 断言（71~72）读 lib/e2e.js —— 同为 lib/ 根下新文件，必须单独列
     // （该脆弱点第五次，注释留档）。
     'lib/e2e.js',
+    // 环境体检断言（77~78）读 lib/env-check.js —— 又是 lib/ 根下新文件。
+    // **这是第六次踩同一个坑**：新增 doc-drift 的 read() 目标却没同步本清单，
+    // 结果是【所有】自检用例都因 ENOENT 失败（不是断言失效，是文件根本不在
+    // 副本里）—— 症状是整批 ✖，很容易误判成"我的改动破坏了漂移检查"。
+    'lib/env-check.js',
     'bin',
     'lib/hub',
     'lib/node',
