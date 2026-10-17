@@ -72,6 +72,53 @@ for (const [name, target] of Object.entries(pkg.bin ?? {})) {
   if (!exists(target)) problems.push(`bin["${name}"] 指向不存在的路径: ${target}`)
 }
 
+// ── 3b) 发布清单里的文件名必须全是 ASCII ─────────────────────────────────────
+//
+// npm 打包成 **tar 归档**，而 tar 层的文件名编码不可靠：非 ASCII 名字解压后
+// 会变成乱码。这不是理论问题 —— 0.4.0 实际发布出去的 tarball 里躺着
+//
+//     package/bin/˫������-������.cmd
+//
+// 原名是 `双击运行-配置向导.cmd`（NTFS 上完全正常，问题只在 tar 层）。
+// 结果：Windows 用户解压后看到一个乱码文件，双击入口等于不存在。
+//
+// 所以这里扫一遍 `files` 列出的每个目录，任何非 ASCII 文件名都算问题。
+{
+  const ascii = /^[\x20-\x7E]+$/
+  const scan = (relDir, out = []) => {
+    const abs = path.join(ROOT, relDir)
+    if (!fs.existsSync(abs)) return out
+    let entries
+    try {
+      entries = fs.readdirSync(abs, { withFileTypes: true })
+    } catch {
+      return out
+    }
+    for (const e of entries) {
+      if (e.name === 'node_modules' || e.name === '.git') continue
+      const rel = path.posix.join(relDir.replace(/\\/g, '/'), e.name)
+      if (!ascii.test(e.name)) out.push(rel)
+      if (e.isDirectory()) scan(rel, out)
+    }
+    return out
+  }
+  const bad = []
+  for (const entry of Array.isArray(pkg.files) ? pkg.files : []) {
+    const abs = path.join(ROOT, entry)
+    if (!fs.existsSync(abs)) continue
+    if (fs.statSync(abs).isDirectory()) scan(entry, bad)
+    else if (!ascii.test(path.basename(entry))) bad.push(entry)
+  }
+  if (bad.length > 0) {
+    problems.push(
+      `发布清单里有 ${bad.length} 个非 ASCII 文件名（npm 打成 tar 后必然乱码）：\n`
+      + bad.map((b) => `      ${b}`).join('\n'),
+    )
+  } else {
+    notes.push('files 清单里的文件名全是 ASCII（tar 编码安全）')
+  }
+}
+
 // ── 4) dsh.bundle.patch（DSH 专用：loader 靠它插入插件行）────────────────────
 const patch = pkg.dsh?.bundle?.patch
 if (typeof patch !== 'string') {

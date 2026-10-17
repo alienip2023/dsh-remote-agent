@@ -484,23 +484,40 @@ for (const [i, [file, why]] of MAINT_FILES.entries()) {
 
 /* ── 48. Windows 双击入口 ──
  *
- * 零终端用户的第一道墙是"开终端"。启动器文件有两条硬规矩：
+ * 零终端用户的第一道墙是"开终端"。启动器文件有**三条**硬规矩：
  *   内容必须 ASCII（cmd.exe 按 OEM 码页解析批处理，非 ASCII 必乱码），
- *   行尾必须 CRLF（LF-only 的批处理有解析边缘案例）。
- * 文件名可以是中文（NTFS 是 Unicode），用字节级断言钉住这两条。
+ *   行尾必须 CRLF（LF-only 的批处理有解析边缘案例），
+ *   **文件名也必须 ASCII**（见下）。
+ *
+ * ── 文件名为什么也必须 ASCII（2026-10-16 实测翻车）──────────────────────
+ *
+ * 这条断言原本的注释写的是"文件名可以是中文（NTFS 是 Unicode）"。
+ * **在本地是对的，发布出去是错的。** 0.4.0 的 npm tarball 里实际躺着：
+ *
+ *     package/bin/˫������-������.cmd
+ *
+ * 原名 `双击运行-配置向导.cmd`（8 个中文字符）。npm 打成 **tar 归档**，
+ * tar 层的文件名编码不可靠 —— NTFS 的 Unicode 文件名在这里丢了，
+ * 解压出来是乱码。Windows 用户看到的就是一个打不开的怪文件，
+ * 双击入口等于不存在。
+ *
+ * 所以现在改名 `setup.cmd`，并且这条断言用**字节级**检查两件事：
+ * 文件名全 ASCII、文件内容全 ASCII + CRLF。
  */
 {
-  const cmdPath = path.join(ROOT, 'bin', '双击运行-配置向导.cmd')
+  const cmdName = 'setup.cmd'
+  const cmdPath = path.join(ROOT, 'bin', cmdName)
   const ok48 = (() => {
     if (!fs.existsSync(cmdPath)) return false
+    if (!/^[\x20-\x7E]+$/.test(cmdName)) return false // 文件名 ASCII（tar 安全）
     const buf = fs.readFileSync(cmdPath)
     if (buf.some((b) => b > 127)) return false // 内容 ASCII
     if (!buf.includes(Buffer.from('@echo off\r\n'))) return false // CRLF
     return buf.includes(Buffer.from('dsh-remote-setup.js')) // 确实启动向导
   })()
-  check('48', 'Windows 双击入口存在且 ASCII/CRLF 规范，README 有双击路径',
-    ok48 && /双击/.test(read('README.md')),
-    'bin/双击运行-配置向导.cmd + README.md')
+  check('48', 'Windows 双击入口存在且**文件名与内容**都 ASCII/CRLF，README 有双击路径',
+    ok48 && /双击/.test(read('README.md')) && read('README.md').includes(cmdName),
+    `bin/${cmdName} + README.md`)
 }
 
 /* ── 49. 真实运行时自检工具与 KNOWN-ISSUES 验证记录 ──

@@ -59,7 +59,7 @@ leads to the same endpoint**:
 
 | Route | Hub | Worker | For |
 |---|---|---|---|
-| **① Zero terminal**（Windows） | Double-click `bin/双击运行-配置向导.cmd` → Enter → Web panel "副机接入" copies the pairing code | Double-click the same file → paste the pairing code → Enter writes config | Anyone who flinches at a black window |
+| **① Zero terminal**（Windows） | Double-click `bin/setup.cmd` → Enter → Web panel "副机接入" copies the pairing code | Double-click the same file → paste the pairing code → Enter writes config | Anyone who flinches at a black window |
 | **② Wizard**（recommended） | Run the wizard in a terminal → Enter to confirm | Same, paste the pairing code | You can open a terminal |
 | **③ Manual** | Hand-write config per the section below | Hand-write (`inject: []` is mandatory) | You want full control |
 
@@ -72,7 +72,7 @@ node bin/dsh-remote-setup.js
 ```
 
 > **Windows, no terminal?** In the plugin's `bin/` directory **double-click
-> `双击运行-配置向导.cmd`** —— then just keep pressing Enter in the window
+> `setup.cmd`** —— then just keep pressing Enter in the window
 > that opens.
 > The plugin lives at `%USERPROFILE%\.dsh\dsh_orb\dsh-plugin\dsh-remote-agent\bin\`.
 
