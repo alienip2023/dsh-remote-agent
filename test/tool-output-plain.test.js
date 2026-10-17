@@ -138,17 +138,35 @@ test('收口：reg() 必须给每个工具包上净化层', () => {
   assert.match(regBody, /toPlainJson\(/, 'reg 必须把 execute 的返回值过一遍 toPlainJson')
 })
 
-test('收口：toPlainJson 必须覆盖全部 8 个工具（经 reg 注册）', () => {
+test('收口：toPlainJson 必须覆盖全部 12 个工具（经 reg 注册）', () => {
   const src = fs.readFileSync(TOOLS, 'utf8')
-  const names = [...src.matchAll(/name: '(remote_[a-z_]+)'/g)].map((m) => m[1])
-  assert.equal(names.length, 8, `应有 8 个工具，实际 ${names.length}: ${names.join(', ')}`)
-  // 每个都走 reg({...})，所以自动被包净化
+  // 8 个任务工具直接 reg({ name: 'remote_x' })；4 个文件工具（提案 #25）经
+  // fsOp(name, ...) 包装，name 以第一实参出现 —— 两种形态都要数进来。
+  const direct = [...src.matchAll(/name: '(remote_[a-z_]+)'/g)].map((m) => m[1])
+  const viaFsOp = [...src.matchAll(/\n {4}'(remote_[a-z_]+)',\n/g)].map((m) => m[1])
+  const names = [...direct, ...viaFsOp]
+  assert.equal(names.length, 12, `应有 12 个工具，实际 ${names.length}: ${names.join(', ')}`)
+  // 直接 reg({...}) 的 8 个；fsOp 内部那处 reg({ 缩进 4 空格，不在此列
   const regCalls = (src.match(/\n {2}reg\(\{/g) || []).length
-  assert.equal(regCalls, 8, `应有 8 处 reg({...}) 调用，实际 ${regCalls}`)
+  assert.equal(regCalls, 8, `应有 8 处直接 reg({...}) 调用，实际 ${regCalls}`)
+  assert.match(src, /const fsOp = /, '文件工具应经 fsOp 包装注册（统一 fsRequest 错误转译）')
   // 锁住工具集合本身：新增/删除工具时这条会提醒你同步文档与断言
   assert.deepEqual(
     names.slice().sort(),
-    ['remote_cancel', 'remote_handoff', 'remote_manifest', 'remote_nodes', 'remote_pull', 'remote_purge', 'remote_status', 'remote_task'],
+    [
+      'remote_cancel',
+      'remote_grep',
+      'remote_handoff',
+      'remote_ls',
+      'remote_manifest',
+      'remote_nodes',
+      'remote_pull',
+      'remote_purge',
+      'remote_read',
+      'remote_status',
+      'remote_task',
+      'remote_tree',
+    ],
     '工具集合变了 —— 记得同步 README、check-doc-drift 与这里的断言',
   )
 })

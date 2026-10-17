@@ -235,6 +235,10 @@ Once installed you **don't need to memorize commands** — just talk:
 | "What artifacts are there?" | `remote_manifest` |
 | "Pull report.pdf over" | `remote_pull` |
 | "Cancel that task" | `remote_cancel` |
+| "List what's in D:\BigData on the worker" | `remote_ls` |
+| "Read that config.json on the worker" | `remote_read` |
+| "Search the worker's 50GB folder for this term" | `remote_grep` |
+| "What does that folder on the worker look like?" | `remote_tree` |
 
 There is also a Web panel (sidebar → "远程同事"): node list (with CPU / memory
 / load badges), task dispatch, task states, result summaries, workspace
@@ -262,6 +266,40 @@ changes, change diffs, final artifacts, log tail.
 
 **`exec` mode runs PowerShell on Windows workers** —— separate commands with
 `;`, not `&` (rejected). For cmd syntax, use `cmd /c "..."` explicitly.
+
+</details>
+
+### Reading files on the worker (no network drive needed)
+
+Four read-only file tools (`remote_ls` / `remote_read` / `remote_grep` /
+`remote_tree`) work out of the box: the AI can list directories, read files,
+run full-text search, and inspect folder structure — **no network share, no
+mount, no SMB setup**. Scan-type operations (grep/tree) run locally on the
+worker and only the results cross the wire — a 50GB folder never moves.
+
+<details>
+<summary>File tool parameters and boundaries</summary>
+
+| Tool | Parameters | Meaning |
+|---|---|---|
+| `remote_ls` | `path` (required), `limit`, `offset` | List a directory (single level, paged, directories first) |
+| `remote_read` | `path` (required), `offset`, `limit` | Text files ≤8MB are paged line by line (≤256KB per response); binaries return only sha256 + size + hex head preview |
+| `remote_grep` | `path`, `pattern` (required), `glob`, `regex`, `ignoreCase`, `maxMatches` | Full-text search on the worker (pure JS, no external grep spawned); caps: 2000 files / 2MB per file / 200 matches / 10 s |
+| `remote_tree` | `path` (required), `depth` | Directory-tree summary (depth 1-6, default 3; ≤2000 entries) |
+
+**Boundaries (same bottom line as the task pipeline)**: read-only — the module
+has no write verb; paths must be absolute and inside the node's `roots`,
+anything else is rejected (`workspace-denied`); `denyPaths` applies too (denied
+entries are not even reported by name); symbolic links are listed but never
+followed. File operations travel on a dedicated `fs/req`↔`fs/res` channel —
+**they never enter the task queue or occupy concurrency slots** — and under
+relay mode they are **end-to-end encrypted** like task frames (the relay sees
+ciphertext only).
+
+**Combining with manual setups**: for "AI looks up / searches a file" use
+these tools (zero config, works across NATs); for "browse huge media files
+like a local drive" SMB/network drives remain the right tool — they
+complement each other.
 
 </details>
 

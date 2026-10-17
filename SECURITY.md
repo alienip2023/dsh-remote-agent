@@ -202,6 +202,30 @@ docs/verification-repos-routing-real.md §4③）。超长值 400 字符截断�
 协议里**不带模型 API key**。副机用自己的 DSH 配置与凭证 ——
 主机只能派任务，拿不到副机的模型凭证。
 
+### 远程文件工具：只读、roots 边界、链接不跟随（提案 #25）
+
+四个文件工具（`remote_ls` / `remote_read` / `remote_grep` / `remote_tree`）
+让 AI 直接读副机文件 —— 它们的安全模型：
+
+- **只读**。`lib/node/fs-service.js` 整个模块没有任何写动词；二进制文件
+  只回 sha256 + 大小 + 64 字节头部预览，不回原始字节。
+- **`roots` 是同一条边界**。每个入口路径先 `realpathSync.native`（展开
+  8.3 短名与符号链接，与任务工作区解析同口径）再与 `roots` 前缀比对，
+  越界即 `workspace-denied`；`denyPaths` 在**枚举层**就生效 —— 被禁
+  条目连名字都不会上报给 hub。
+- **符号链接不跟随**。tree/grep 遍历时链接只列条目本身：roots 内一个指向
+  `C:\Users` 的链接不是逃逸口。
+- **带宽有界**。read 单响应 ≤256KB；grep 上限 2000 文件 / 单文件 2MB /
+  命中 200 / 10 秒；tree 条目 ≤2000。副机不会被一次请求拖死。
+- **独立通道 + 加密**。文件操作走 `fs/req`↔`fs/res` 专用帧（15s 超时，
+  断连即失败），**不进任务队列、不占并发槽**；`fs/req` 在 relay 模式下
+  属于必需加密帧集 —— 文件路径与内容对中继不可见。
+
+注意：本组工具与 `remote_task` 共享 `roots` 的**读取**面 —— 给了
+`roots` 就意味着主机 AI 可以读那些内容（与派任务让副机 agent 读文件
+的既有能力等价，只是更快更直接）。不想让 AI 读某目录，把它加进
+`denyPaths`。
+
 ### exec 两阶段审批：默认挂起，等不到人不跑（提案 #2）
 
 `mode:"exec"` 的任务**默认 `approval:"manual"`**：hub 收到派单后挂起，

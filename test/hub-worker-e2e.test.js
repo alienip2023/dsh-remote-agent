@@ -832,7 +832,7 @@ test('hub⇄worker e2e：remote-agent subagent provider 接线正确', async (t)
   const relay = await startRelay(t)
   const env = await setup(t, { root, mode: 'relay', relay })
 
-  // 七个 remote_* 工具都注册了
+  // 七个 remote_* 任务工具 + 四个 remote_* 文件工具（提案 #25）都注册了
   for (const name of [
     'remote_nodes',
     'remote_task',
@@ -841,6 +841,10 @@ test('hub⇄worker e2e：remote-agent subagent provider 接线正确', async (t)
     'remote_manifest',
     'remote_pull',
     'remote_cancel',
+    'remote_ls',
+    'remote_read',
+    'remote_grep',
+    'remote_tree',
   ]) {
     assert.ok(env.tools.has(name), `缺少工具 ${name}`)
     const def = env.tools.get(name)
@@ -1071,4 +1075,99 @@ test('hub⇄worker e2e（direct）：E2E 在直连模式同样生效', async (t)
   assert.equal(handoff.status, TASK_STATUS.COMPLETED)
   // 会话确实在（而不是旧版明文路径碰巧跑通）
   assert.ok(env.hub.registry.getNode(env.nodeId).e2e, 'direct 模式也应有 E2E 会话')
+})
+
+/* ══════════════════════════════════════════════════════════════════
+ * 远程文件工具集（提案 #25）：fs/req ↔ fs/res 独立通道走真实链路
+ * ══════════════════════════════════════════════════════════════════ */
+
+test('hub⇄worker e2e：remote_ls/read/grep/tree 走真实通道，越界与缺失被拒', async (t) => {
+  const root = tmpRoot(t)
+  const env = await setup(t, { root, mode: 'direct' })
+
+  // 造一棵确定性小树
+  fs.mkdirSync(path.join(env.wsRoot, 'sub'), { recursive: true })
+  fs.writeFileSync(path.join(env.wsRoot, 'a.txt'), 'hello needle\nsecond line\n')
+  fs.writeFileSync(path.join(env.wsRoot, 'sub', 'b.txt'), 'needle in sub\n')
+  fs.writeFileSync(path.join(env.wsRoot, 'data.bin'), Buffer.from([0x00, 0x01, 0x02, 0xff]))
+
+  // ── ls：目录排前，文件带大小 ────────────────────────────────────
+  const ls = await env.tool('remote_ls')({ path: env.wsRoot })
+  assert.equal(ls.node, env.nodeId)
+  assert.equal(ls.total, 3)
+  assert.equal(ls.entries[0].type, 'dir', '目录应排在前面')
+  const fileEntry = ls.entries.find((e) => e.name === 'a.txt')
+  assert.ok(fileEntry.size > 0, '文件条目应有大小')
+
+  // ── read 文本：按行返回 ─────────────────────────────────────────
+  const rd = await env.tool('remote_read')({ path: path.join(env.wsRoot, 'a.txt') })
+  assert.equal(rd.binary, false)
+  assert.deepEqual(rd.lines, ['hello needle', 'second line'])
+  assert.equal(rd.totalLines, 2)
+
+  // ── read 二进制：只回元数据 ─────────────────────────────────────
+  const rb = await env.tool('remote_read')({ path: path.join(env.wsRoot, 'data.bin') })
+  assert.equal(rb.binary, true)
+  assert.match(rb.sha256 ?? '', /^[0-9a-f]{64}$/, '二进制应回 sha256')
+  assert.ok(Array.isArray(rb.lines) === false || rb.lines === undefined, '二进制不应回文本行')
+
+  // ── grep：递归命中 ──────────────────────────────────────────────
+  const g = await env.tool('remote_grep')({ path: env.wsRoot, pattern: 'needle' })
+  assert.equal(g.matchCount, 2)
+  assert.ok(g.matches.some((m) => m.file.endsWith(path.join('sub', 'b.txt')) || m.file.includes('sub')))
+
+  // ── tree：结构与截断元数据 ──────────────────────────────────────
+  const tr = await env.tool('remote_tree')({ path: env.wsRoot, depth: 2 })
+  assert.ok(tr.entries >= 4, `树应含全部条目，实际 ${tr.entries}`)
+  assert.equal(tr.truncated, false)
+
+  // ── 安全边界：roots 外拒绝（平台双可的越界路径）─────────────────
+  const outside = IS_WIN ? 'C://Windows' : '/etc'
+  await assert.rejects(
+    () => env.tool('remote_read')({ path: outside }),
+    (err) => err.code === 'workspace-denied',
+    'roots 外路径应以 workspace-denied 拒绝',
+  )
+
+  // ── 不存在的文件 ────────────────────────────────────────────────
+  await assert.rejects(
+    () => env.tool('remote_read')({ path: path.join(env.wsRoot, 'nope.txt') }),
+    (err) => err.code === 'artifact-missing',
+  )
+
+  // ── render 容错：残缺 value 不抛 ────────────────────────────────
+  const lsDef = env.tools.get('remote_ls')
+  for (const broken of [undefined, null, {}, { entries: undefined }]) {
+    assert.doesNotThrow(() => lsDef.output.render({}, broken))
+  }
+})
+
+test('hub⇄worker e2e（relay）：fs 请求经 E2E，文件内容与路径对窃听器不可见', async (t) => {
+  const root = tmpRoot(t)
+  const relay = await startRelay(t)
+  const env = await setup(t, { root, mode: 'relay', relay })
+
+  await waitForE2E(env.hub.registry, env.nodeId)
+
+  const secret = 'FS-E2E-SECRET-9c41ab'
+  fs.writeFileSync(path.join(env.wsRoot, 'secret.txt'), `${secret}\nplain line\n`)
+
+  const tap = wireTap(relay, env.hub.registry)
+
+  // read 走真实 relay 通道往返
+  const rd = await env.tool('remote_read')({ path: path.join(env.wsRoot, 'secret.txt') })
+  assert.equal(rd.binary, false)
+  assert.equal(rd.lines[0], secret)
+
+  // grep 同样往返（fs/req 双向都过密）
+  const g = await env.tool('remote_grep')({ path: env.wsRoot, pattern: secret })
+  assert.equal(g.matchCount, 1)
+
+  // 窃听器确实记录到了帧（fs/req 外层帧头 t 保留明文，d 整体密文）
+  assert.ok(tap.chunks.some((c) => c.includes(Buffer.from('"fs/req"'))), '应看到 fs/req 帧头（t 字段不加密）')
+  assert.ok(tap.chunks.some((c) => c.includes(Buffer.from('"fs/res"'))), '应看到 fs/res 帧头')
+
+  // 但内容与文件名必须对中继不可见
+  assert.equal(tap.leaks(secret), false, '文件内容泄漏到了中继可见的字节流里')
+  assert.equal(tap.leaks('secret.txt'), false, '文件名泄漏到了中继可见的字节流里')
 })

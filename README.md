@@ -208,6 +208,10 @@ ack 自动按明文兼容旧中继继续），安全边界与已知局限见
 | 「有哪些成品？」 | `remote_manifest` |
 | 「把 report.pdf 拉过来」 | `remote_pull` |
 | 「取消那个任务」 | `remote_cancel` |
+| 「看看副机 D:\BigData 里有什么」 | `remote_ls` |
+| 「读一下副机上那个 config.json」 | `remote_read` |
+| 「在副机 50GB 目录里搜这个词」 | `remote_grep` |
+| 「副机那个文件夹结构长什么样」 | `remote_tree` |
 
 另有一个 Web 面板（侧栏「远程同事」）：节点列表（含 CPU/内存/负载与仓库清单）、
 派发任务、**待审批卡**（exec 任务默认挂起，批准才下发）、任务状态、结果摘要、
@@ -235,6 +239,34 @@ ack 自动按明文兼容旧中继继续），安全边界与已知局限见
 
 **`exec` 模式在 Windows 副机上跑的是 PowerShell** —— 用 `;` 分隔命令，
 不要用 `&`（会被拒）。需要 cmd 语法时显式 `cmd /c "..."`。
+
+</details>
+
+### 读副机上的文件（不用配网盘）
+
+四个只读文件工具（`remote_ls` / `remote_read` / `remote_grep` / `remote_tree`）
+装完即有：AI 可以直接列目录、读文件、全文搜索、看目录结构 —— **不用配网盘、
+不用挂载、不用 SMB**。扫描类操作（grep/tree）在副机本地跑完只回结果，
+50GB 目录也不用搬数据。
+
+<details>
+<summary>文件工具的参数与边界</summary>
+
+| 工具 | 参数 | 说明 |
+|---|---|---|
+| `remote_ls` | `path`（必填）、`limit`、`offset` | 列目录（单层分页，目录优先） |
+| `remote_read` | `path`（必填）、`offset`、`limit` | 文本 ≤8MB 按行分段（单次 ≤256KB）；二进制只回 sha256+大小+头部预览 |
+| `remote_grep` | `path`、`pattern`（必填）、`glob`、`regex`、`ignoreCase`、`maxMatches` | 副机本地全文搜索（纯 JS，不 spawn 外部命令）；上限 2000 文件 / 单文件 2MB / 命中 200 / 10 秒 |
+| `remote_tree` | `path`（必填）、`depth` | 目录树摘要（深度 1-6，默认 3；条目 ≤2000） |
+
+**边界（与任务链路同一条底线）**：只读，没有任何写操作；路径必须是绝对路径
+且落在该节点 `roots` 内，超出即拒（`workspace-denied`）；`denyPaths` 同样生效
+（被禁条目连名字都不上报）；符号链接只列条目不解引用。文件操作走独立的
+`fs/req`↔`fs/res` 帧，**不进任务队列、不占并发槽**，且在 relay 模式下与任务
+帧一样**全程端到端加密**（中继只见密文）。
+
+**与手工方案的组合**：要"AI 点读/搜索"用本组工具（零配置、跨网可用）；
+要"资源管理器像本地盘一样翻大文件"，SMB/网盘仍是正解 —— 两者互补。
 
 </details>
 

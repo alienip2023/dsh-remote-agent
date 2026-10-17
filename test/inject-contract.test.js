@@ -22,7 +22,7 @@
  *
  *   · /api/remote-agent/healthz   → 200（还带着 nodes:1, online:1 的实时计数）
  *   · /api/remote-agent/ui/*      → 401（我的 guard，说明路由在）
- *   · **8 个 remote_* 工具全部消失**
+ *   · **12 个 remote_* 工具全部消失**
  *   · 插件管理页显示「异常」（fiber phase: failed）
  *
  * 我花了很多轮才定位：先怀疑 pnpm 残留、再怀疑 GitHub 网络、再怀疑 UI 缓存，
@@ -63,7 +63,7 @@ function declaredInject() {
 /* ─────────────── 1. 包内 inject 必须覆盖 hub 的三个服务 ─────────────── */
 
 test('包内 inject 必须含 hub 需要的三个服务（webServer/tools/systemPrompt）', () => {
-  // applyHub 会访问这三个（webServer 注册路由、tools 注册 8 个工具、
+  // applyHub 会访问这三个（webServer 注册路由、tools 注册 12 个工具、
   // systemPrompt 挂提示词段）。少任何一个，hub 分支就抛。
   const declared = declaredInject()
   assert.ok(declared !== '', 'cordis.patch.yml 应有生效的 inject 声明')
@@ -176,8 +176,8 @@ test('回归：applyHub 在缺 tools 的 inject 下**不再抛错**（容错生�
   assert.equal(ctxA.registered.tools.length, 0, '缺 tools 时应没有工具')
   assert.ok(ctxA.registered.routes.length > 0, '缺 tools 时路由仍应注册')
 
-  // 齐全：应该有 8 个工具
+  // 齐全：应该有 12 个工具（8 任务 + 4 文件，提案 #25）
   const ctxB = makeCtx(['webServer', 'tools', 'systemPrompt'])
   applyHub(ctxB, { role: 'hub', nodeToken: 'nt_x' })
-  assert.equal(ctxB.registered.tools.length, 8, 'inject 齐全时应有 8 个工具')
+  assert.equal(ctxB.registered.tools.length, 12, 'inject 齐全时应有 12 个工具')
 })
