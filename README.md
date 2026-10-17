@@ -238,7 +238,7 @@ ack 自动按明文兼容旧中继继续），安全边界与已知局限见
 | `dryRun` | 只出预览不派发：返回会派到哪个节点/工作区/模式，路由与校验和正式派发同一条路径 |
 | `workspace` | 副机上的绝对路径，必须在节点 `roots` 内。省略用默认 |
 | `mode` | `agent`（副机起独立 agent 会话，默认）/ `exec`（直接跑命令）|
-| `model` | 可选。副机用的模型（仅 `mode=agent` 生效）：`{model:"deepseek-chat"}` 或 `{provider:"openai",model:"gpt-4o"}`。只传选择不传凭证 —— 副机用自己的 provider 配置跑；headless 后端不支持 |
+| `model` | 可选。副机用的模型（仅 `mode=agent` 生效）：`{model:"deepseek-chat"}` 或 `{provider:"openai",model:"gpt-4o"}`。只传选择不传凭证 —— 副机用自己的 provider 配置跑。**headless 后端不支持指定模型**（派发前就会被拦，副机固定用默认模型）；`dryRun` 会回显解析后的模型与来源，副机的默认模型见 `remote_nodes` |
 | `outputs` | 期望产出物的 glob（相对工作区），用于产物清单筛选 |
 | `timeoutMs` | 副机侧超时。缺省按模式：**exec 10 分钟、agent 1 小时**（一条慢 exec 不该锁死副机一小时） |
 | `denyPaths` | 额外禁止访问的绝对路径 |

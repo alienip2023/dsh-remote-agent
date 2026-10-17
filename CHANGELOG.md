@@ -9,6 +9,36 @@
 
 ---
 
+## [0.7.0] - 2026-10-17
+
+### 功能：模型自述 + headless 指定模型派发前拦截（提案 #27）
+
+副机此前"只有它自己知道有哪些模型"—— 面板让用户自由填 provider/model，
+填错要等任务跑到副机才失败。本版先解决可靠可达的两半：
+
+- **副机自述**：`RESOURCE` 帧随车上报 `runnerKind`（in-process/headless）
+  与 `defaultModel`（来自 DSH `agentDefaultModel.currentSelection()`，
+  **只报 provider 键名 + model id，不碰任何凭证**；取不到一律 null，
+  尽力而为不影响遥测帧）。hub 摄入清洗后 `remote_nodes` 透出并在节点行
+  渲染（"后端 in-process · 默认模型 official/deepseek-chat"）。
+- **派发前拦截**：`remote_task` 在 `mode=agent` + 显式 `model` + 目标节点
+  为 headless 后端时**立即报错**（旧链路要等任务跑到副机才失败，浪费
+  一轮往返 + 烧一个 taskId）。dryRun 与真实派发同一条校验路径。
+- **dryRun 回显模型**：预览里给解析后的 `{provider, model}` 与
+  `modelSource`（用户指定 / 副机默认 / 未指定）—— 派之前就知道用
+  什么模型。
+
+**范围收敛（如实说明）**：完整的"可用模型清单 + 面板下拉"本版不做 ——
+in-process 后端没有稳定的清单 API（DSH 内部的 `model/list` 走
+app-server 协议面，fiber 服务摸不到；探测 llm-pi-ai 内部结构太脆弱）。
+等 DSH 把清单暴露成稳定服务 API 后补（面板届时渲染下拉，第一项
+"跟随副机默认"，数据链路本版已铺好）。
+
+测试：`test/model-selfreport.test.js` 3 条 + e2e 2 条（自述贯通 /
+headless 拦截 / dryRun 回显）+ 修一处脆弱断言（applySync 窗口锚定义处）。
+
+---
+
 ## [0.6.0] - 2026-10-17
 
 ### 修复：单条慢命令锁死整台副机（提案 #26，实测事故防线）

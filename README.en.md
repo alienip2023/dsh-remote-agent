@@ -268,7 +268,7 @@ changes, change diffs, final artifacts, log tail.
 | `dryRun` | Preview only: returns which node/workspace/mode would be used, computed by the exact same routing + validation as a real dispatch |
 | `workspace` | Absolute path on the worker, must be inside the node's `roots`. Defaults when omitted |
 | `mode` | `agent` (worker starts an independent agent session, default) / `exec` (run a command directly) |
-| `model` | Optional. Model the worker should use (`mode=agent` only): `{model:"deepseek-chat"}` or `{provider:"openai",model:"gpt-4o"}`. Selection only, no credentials —— the worker runs it with its own provider config; unsupported on headless backends |
+| `model` | Optional. Model the worker should use (`mode=agent` only): `{model:"deepseek-chat"}` or `{provider:"openai",model:"gpt-4o"}`. Selection only, no credentials. **Not supported on headless backends** (rejected before dispatch; the worker then uses its default model). `dryRun` echoes the resolved model and its source; the worker's default model is shown by `remote_nodes` |
 | `outputs` | Glob of expected outputs (relative to the workspace), used to filter the artifact manifest |
 | `timeoutMs` | Worker-side timeout. Defaults by mode: **exec 10 minutes, agent 1 hour** (one slow exec should not pin the worker for an hour) |
 | `denyPaths` | Extra absolute paths to deny |
