@@ -9,6 +9,115 @@
 
 ---
 
+## [0.9.1] - 2026-10-17
+
+> **0.9.0 发布约 40 分钟后补发**。两个 High 都是真实功能失效
+> （体检对新装用户全面误报、SMB 共享完全不可用），趁用户数还少尽快修正。
+
+### 修复（High）：环境体检对默认安装全面误报，且五项检查静默跳过
+
+`/env-check` 路由传的是**原始 `config.role`**，而 0.9.0 起默认安装的生效配置
+就是 `role: 'auto'`（`Config` 的 `.default('auto')` + 包内 patch 显式写入）。
+`envChecks` 的判据 `isHub = role === 'hub' || role === 'both'` 拿到未解析的
+`'auto'` 判 false，于是：
+
+- **reachability / port / firewall / tailscale / nodes 五项全部跳过**
+  —— 而这五项正是体检存在的理由（副机连不上的静默失败）
+- `inject` 按 worker 三件套判定 → hub 正确的 inject 反被判"缺服务"
+- `role` 检查误报未配置
+
+实测（修复前）：
+
+    role=auto → { ok:false, failed:2, items:[role(FAIL), inject(FAIL)] }
+
+**影响放大**：9.0 的"首次自动体检"让这份"双误报 + 零诊断"在**每个新装用户
+首次打开面板时自动弹出**。
+
+修复（双保险）：
+
+1. 路由改传 `resolveRole(config) || 'hub'`（与 `setup-routes` 同一份实现）
+2. `envChecks` **自己**也解析 —— 即使调用方传错 `'auto'` 也能推断
+   （判据：配置里写了 role 就以配置为准交给 `resolveRole`；没这个字段才用
+   调用方给的值。两个极端写法都会误报，已由 5 个场景用例覆盖）
+
+实测（修复后）：
+
+    role=auto → role ✓ / inject ✓ / reachability ✗（正确报出 loopback）/ nodes ✗
+
+### 修复（High）：SMB「生成共享命令」100% 失败
+
+面板的 `doPlan` **恒定发送 `dir: ''`** —— 面板里根本没有选择目录的 UI，
+而副机侧 `if (dir === '') reply ok:false 'plan 需要 dir'` 按设计拒绝。
+于是工作区共享的**唯一主动作完全不可用**（probe 与后端 RPC 正常，API 直调可绕）。
+
+修复：
+
+- 加目录选择 UI，数据源是 `node.roots`（`nodeView` 一直透出它，那是副机的
+  安全边界、也正是该共享的目录），默认第一项
+- 无 `roots` 时退回可手填的输入框 + 说明原因
+- 换副机时重置候选与 plan/probe 结果（否则会显示别人的共享命令）
+- `dir` 为空时禁用按钮（不给用户"点了才失败"）
+
+### 修复（Medium）：CLI `--doctor` 与面板体检是两套并行实现
+
+三处注释曾声称"命令行与面板共用 `lib/env-check.js` 的同一份逻辑" —— 那是失真的：
+CLI 走 `setup.js` 的 `doctorChecks`（14 项静态），面板走 `envChecks`（8 项运行时态），
+**检查项不相交**。CLI 有 Node 版本 / hubUrl / token 但**没有 loopback 诊断**
+（本版本最重要的那条），面板有 reachability 但没有前者。
+
+修复：两段都跑、结果合并。顺带修掉 CLI 把 role 写死成 `'hub'` 的同类 bug
+（`grab('role') || 'hub'` 会让 auto-worker 被当 hub 体检）→ 改用 `resolveRole`。
+
+实测新增输出：`✓ Web 服务绑在可达地址 —— 当前监听 http://0.0.0.0:19387`
+
+### 修复（Medium）：模型下拉的「自定义…」永远展不开文本框
+
+原实现靠 `fv.model === '__custom__'` 判定，但表单里存的是**真实模型名**或空串，
+从来不是字面量 `'__custom__'`：
+
+- 从"跟随默认"（model=''）选自定义 → 旧值仍为 '' → `isCustom=false` → 弹回
+- 从任一有效选项选自定义 → 旧模型名被保留 → `isCustom=false` → 同样弹回
+
+唯一能进 `isCustom` 的路径是"表单预填了清单外模型名"（先有鸡）。
+
+修复：加独立布尔 state `modelCustom`，`isCustom = modelCustom || (model 非空
+且不在清单里)`。
+
+### 修复（Low ×5）
+
+- **templates.js 注释残留旧重试参数**（~​1.3s / 封顶 200ms）与常量
+  （16 次 / 500ms / ~6s）不符 → 改为引用常量名 + 指向事故史。
+  **这条最容易埋雷**：后来者可能照注释把窗口"修"回去。
+- **`net share` 文本解析对含空格路径截断**（`D:\Deepseek Harness file`
+  → `D:\Deepseek`）→ 改用 `Get-SmbShare | ConvertTo-Json` 取结构化路径，
+  `net share` 仅作回退。本项目自己的目录名就带空格，这个 bug 在本机即会触发。
+- **`autoFix` 承诺了不存在的能力**（全仓库无 fix 路由 / 无 `--fix` 参数，
+  面板也没修复按钮）→ 语义改为"修法机械、照抄即可"，文案全部改写，
+  reachability 项直接给**可粘贴的 YAML 片段**。
+- **README 两处数字漂移**：状态行仍写 0.8.1、断言数写 117（实际 118）→ 修正中英两版。
+- **hub ingest 无终态守卫**：晚期 `TASK_END`/`TASK_SUMMARY` 可把已置
+  `FAILED(node-unreachable)` 改写回真实终态（良性但破坏"终态即终态"心智模型）
+  → 加 `TERMINAL_STATUS.has(t.status)` 守卫（同终态重发幂等放行）。
+
+### 新增：装配级测试（10 条）
+
+`test/assembly-wiring.test.js` —— 全部锚在**接线处**而非模块内部：
+
+两个 High 的共同点是"**单测覆盖了模块本身，没人测模块被装配进系统时的形状**"。
+`envChecks({role:'hub'})` 全绿证明不了路由传对了；`buildShareCommand` 全绿
+证明不了面板真的发了 `dir`。
+
+另加 doc-drift 断言 84/85 钉住这两条接线，并做了**负向验证**
+（回退修复后断言正确报 DRIFT）。
+
+```
+packaging   4 项
+doc-drift   120/120
+diag:inject 11 项
+tests       949（948 pass / 0 fail / 1 skip）
+lint        干净
+```
+
 ## [0.9.0] - 2026-10-17
 
 ### ⚠ 行为变更：exec 任务默认超时 1 小时 → 10 分钟
