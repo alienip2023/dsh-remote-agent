@@ -1129,6 +1129,45 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     'lib/client.js（dir: shareDir + nodeRoots UI）+ bin/dsh-remote-setup.js（envChecks）')
 }
 
+/* ── 86~87. 独立监听端口（2026-10-18，架构级修复）──
+ *
+ * 副机端点原来注册在 `ctx.webServer` 上 → 副机必须访问 DSH 的 webserver 端口。
+ * 而那个端口：
+ *   · **DSH 每次启动重写 profile patch**，把写进去的 `webserver` 段删掉
+ *     （实测：3962B/15 条 → 661B/3 条）→ 绑回 127.0.0.1 → 副机永远连不上
+ *   · `webServer` 激活即 listen，没有 rebind 方法
+ *   · 新版硬拒绝 0.0.0.0（会让 DSH 启动崩溃，踩过 10 份 crash 日志）
+ *
+ * 所以插件自己开一个 node:http server 服务节点端点，完全绕开 DSH 的 webserver。
+ * 这两条断言钉住"这条通道存在且不依赖 webServer"。
+ */
+{
+  const hubSrc2 = read('lib/hub/index.js')
+  const listenSrc = read('lib/listen-server.js')
+
+  check('86', '独立监听：插件自己开端口服务节点端点（不依赖 webServer 配置）',
+    /startListenServer/.test(hubSrc2)
+    && /resolveListenHost/.test(hubSrc2)
+    // 默认端口 19387（与历史配置/配对码/文档一致）
+    && /DEFAULT_LISTEN_PORT/.test(listenSrc)
+    && /19387/.test(listenSrc)
+    // 必须真的用 node:http 起 server（不是只 import 不用）
+    && /createServer/.test(listenSrc)
+    && /node:http/.test(listenSrc)
+    // 路径精确匹配（只承载节点端点，不做通用 web server）
+    && /pathname !== upgradePath/.test(listenSrc),
+    'lib/hub/index.js + lib/listen-server.js（node:http + acceptUpgrade + 精确路径）')
+
+  check('87', '独立监听：拒绝 0.0.0.0 + Tailscale 优先 + 测试环境不占端口',
+    // 拒绝通配地址（与新版 DSH 同规则；0.0.0.0 会让 DSH 崩溃，我们踩过）
+    /h !== '0\.0\.0\.0'/.test(listenSrc)
+    // 自动选地址时 Tailscale 优先（本插件的目标场景就是跨网）
+    && /isTailscaleIp/.test(listenSrc)
+    // 测试环境下不真的监听（否则 npm test 会挂住 —— 实测过）
+    && /NODE_TEST_CONTEXT/.test(hubSrc2),
+    'lib/listen-server.js（拒 0.0.0.0 + Tailscale 优先）+ hub/index.js（测试环境跳过）')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {

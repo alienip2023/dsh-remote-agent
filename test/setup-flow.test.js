@@ -331,7 +331,7 @@ test('setup state 如实报告 configured（面板据此区分引导/切换）',
   const code = stripComments(setupRoutes)
   const i = code.indexOf('/state`')
   assert.ok(i >= 0, '应有 state 端点')
-  const seg = code.slice(i, i + 1200)
+  const seg = code.slice(i, i + 2400)
 
   // 2026-10-17 改：判据不再自己写一遍 `role === 'hub' || ...`，而是**复用**
   // resolveRoleDetail —— 两处判据不一致会造成最难排查的撕裂
@@ -344,6 +344,10 @@ test('setup state 如实报告 configured（面板据此区分引导/切换）',
   // 必须透出"推断出的生效角色"，否则面板无法告诉用户"你现在是 hub 还是 worker"
   assert.match(seg, /effectiveRole:/, '应回 effectiveRole（auto 时的推断结果）')
   assert.match(seg, /inferred:/, '应回 inferred（推断依据，便于排查）')
+
+  // 必须报告配置持久化的两层状态（2026-10-18：排查"被 DSH 重写冲掉"的关键）
+  assert.match(seg, /persist:/, '应报告 persist（patch 层 + instance 层）')
+  assert.match(seg, /instanceFile:/, '应报告 instance 配置是否已落盘')
 
   // 回显字段必须仍在（切换角色时"改一个字段"而不是从头填）
   for (const k of ['nodeId', 'transportMode', 'hubUrl', 'relayUrl', 'roots']) {
