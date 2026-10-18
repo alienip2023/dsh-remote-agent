@@ -99,36 +99,43 @@
         role: auto
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 让 hub 真的能被外部访问（2026-10-17，**这是"开箱即用"的关键一条**）
+# ⚠⚠ 绝对不要覆盖 webserver 的 host（2026-10-18 事故：我犯过这个错）
 # ═══════════════════════════════════════════════════════════════════════════
 #
-# ── 为什么必须改 webserver ──────────────────────────────────────────────
+# ── 事故经过 ────────────────────────────────────────────────────────────
 #
-# 本插件的副机要主动连主机：`ws://<主机IP>:19387/api/remote-agent/node`。
-# 而那个 WebSocket upgrade 是注册在 DSH 的 `ctx.webServer` 上的
-# （`ctx.webServer.registerUpgrade(...)`）—— **没有独立端口选项**。
+# v0.9.0 为了让"副机连得上"，我在包内 patch 里加了：
 #
-# 而 DSH 的 `@deepseek-ai/dsh-host-webserver` 的 `host` 是必填项、无默认值，
-# 且它面向的默认场景是"本机浏览器访问自己"，所以多数 profile 绑 127.0.0.1。
+#     - id: webserver
+#       config:
+#         host: '0.0.0.0'
+#         port: 19387
 #
-# 结果：不覆盖这一行，hub 只监听 loopback → **副机永远连不上**，而主机侧
-# 毫无异常（healthz 200、面板能开、工具都在）。用户只能猜"地址错了？
-# token 错了？防火墙？" —— 2026-10-17 实测踩到，代价是好几轮排查。
+# **结果：DSH 直接启动崩溃。** 新版 `@deepseek-ai/dsh-host-webserver` 在
+# schema 校验阶段就硬拒绝通配地址：
 #
-# ── 安全披露（必须让用户知道）──────────────────────────────────────────
+#     webserver: host "0.0.0.0" is an unspecified (wildcard) address, which is
+#     not supported: binding every interface would expose remote code execution
+#     to the network; bind one concrete IPv4 or IPv6 address of a local
+#     interface instead
 #
-# 绑 0.0.0.0 意味着 **DSH 的整个 Web GUI 也能被局域网访问**（不只是我们的
-# 节点端点）。DSH 自带 Host/Origin 围栏 + 浏览器 cookie 鉴权，但暴露面确实
-# 变大了。所以：
-#   · README 与面板都有明确提示
-#   · 环境体检把这条列出来
-#   · 用户可在 profile 里覆盖回 127.0.0.1（此时请改用 relay 模式，否则副机连不上）
+# 后果链：webserver（required）激活失败 → `webServer` 服务缺失 → 至少 6 个
+# 插件排队等它（web-runtime / open-in-app / directory-picker / client-hmr /
+# **remote-agent** …）→ host 启动失败。实测产生了 10 份 crash 日志。
 #
-# ── 优先级 ──────────────────────────────────────────────────────────────
+# 这个错误比它想修的"副机连不上"严重得多：**连 DSH 都起不来了**。
 #
-# `cordis.yml` 头注释：应用顺序是 bundles → cordis.patch.yml → --patch overlays。
-# 所以**用户 profile 里的同名行会覆盖这里**（用户优先，符合预期）。
-- id: webserver
-  config:
-    host: '0.0.0.0'
-    port: 19387
+# ── 所以现在的做法 ──────────────────────────────────────────────────────
+#
+# **本包不碰 webserver 的任何字段。** 理由：
+#
+#   1. host 必须是**具体某个本机接口地址**（如 Tailscale IP / 局域网 IP），
+#      而这个值因人而异 —— 包里写死任何具体 IP 都是错的。
+#   2. 插件在 `apply()` 里也**不能**自己读网卡再拼配置：loader 的 patch 是
+#      启动前静态合并的，改不了自己所在那一行的 config。
+#   3. 实际做法：**主机的 webserver 由用户/DSh 自己配**，我们只在
+#      「环境体检」里检测"是否绑在可达地址"，绑 loopback 就明确报错并给出
+#      该填什么（含如何查自己的 Tailscale / 局域网 IP）。
+#
+# 这就是 0575c6b 的可达性自检 + c4459c5 的环境体检的价值 —— **诊断而不是
+# 代改配置**。2026-10-17 我想"帮用户改好"，结果改出了启动崩溃。

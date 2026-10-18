@@ -42,7 +42,13 @@
 **工作区共享（SMB）**、模型下拉。
 
 > **开箱即用**：装完重启 DSH 就能用。包内 patch 默认 `role: auto`（没配
-> `hubUrl` 就是主机），并把 `webserver` 绑到 `0.0.0.0:19387`（否则副机连不上）。
+> `hubUrl` 就是主机），自动生效。
+>
+> **副机要能连上，主机的 `webserver` 必须绑一个具体的本机 IP**（DSH 默认只绑
+> `127.0.0.1`，那样副机永远连不上）。这一步需要你填一次 —— 打开面板时
+> 「环境体检」会检查并告诉你该填什么。
+>
+> ⚠ **不能用 `0.0.0.0`**：新版 DSH 会硬拒绝通配地址，导致 DSH **启动崩溃**。
 > 详见下方「安装」。
 
 <p align="center">
@@ -210,20 +216,41 @@ npm install -g dsh-remote-agent
 
 或在 DSH 的插件对话框里填 `github:zbzbhs/dsh-remote-agent`。
 
-**装完重启 DSH 就能用** —— 不需要改任何配置：
+**装完重启 DSH 就能用**：
 
 - 包内 patch 默认 `role: auto`。**没配 `hubUrl` 就是主机**，自动生效。
-- 包内 patch 把 `webserver` 绑到 `0.0.0.0:19387`，**副机才能连上**
-  （DSH 默认只绑 `127.0.0.1`，那样副机永远连不上且主机侧毫无异常）。
 - 打开 Web 面板「远程同事」，点「副机接入」生成配对码，发给副机。
 
-> **安全披露**：绑 `0.0.0.0` 意味着 **DSH 的整个 Web GUI 也能被局域网访问**
-> （不只是本插件的节点端点）。DSH 自带 Host/Origin 围栏 + 浏览器 cookie 鉴权，
-> 但暴露面确实变大了。如果你不需要跨机访问，可以在 profile 的
-> `cordis.patch.yml` 里覆盖回 `127.0.0.1` —— 但那样副机就连不上，
-> 请改用 [中继模式](profiles/README.md)。
+**唯一需要你填一次的是 `webserver` 的 host** —— 副机要能连上，主机必须绑一个
+**具体的本机 IP**（DSH 默认只绑 `127.0.0.1`，那样副机永远连不上，而且主机侧
+毫无异常）。在 profile 的 `cordis.patch.yml` 里：
+
+```yaml
+- id: webserver
+  config:
+    host: '100.x.x.x'    # ← 换成你自己的地址
+    port: 19387
+```
+
+**怎么查自己的地址**：
+
+- 跨网（推荐）：`tailscale ip -4` —— Tailscale IP 固定不变、跨网可达
+- 同一局域网：`ipconfig` 看 WLAN/以太网那块网卡的 IPv4
+
+> ⚠ **绝对不能写 `0.0.0.0`**。新版 `@deepseek-ai/dsh-host-webserver` 在 schema
+> 校验阶段就会硬拒绝通配地址：
 >
-> 面板的「体检」按钮会明确告诉你当前绑在哪（面板加载时也会自动体检一次）。
+> ```
+> host "0.0.0.0" is an unspecified (wildcard) address, which is not supported:
+> binding every interface would expose remote code execution to the network;
+> bind one concrete IPv4 or IPv6 address of a local interface instead
+> ```
+>
+> 后果是 **DSH 启动崩溃**（`webserver` 是 required 插件，它挂了 `webServer`
+> 服务就缺失，至少 6 个插件排队等它，包括本插件）。
+>
+> 面板的「环境体检」会自动检测这一项，绑错了会明确告诉你当前绑在哪、
+> 该改成什么 —— 面板加载时也会自动体检一次。
 
 ### 副机（worker）—— 贴个配对码就行
 

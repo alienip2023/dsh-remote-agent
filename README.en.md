@@ -44,9 +44,16 @@ memory badges, task dispatch, task states, result summaries, workspace changes,
 change diffs (unified diffs of text-file edits), final artifacts, log tail,
 **environment health-check**, **workspace sharing (SMB)**, model dropdown.
 
-> **Works out of the box**: restart DSH after install and it just works. The
-> bundled patch defaults `role: auto` (no `hubUrl` ⇒ hub) and binds `webserver`
-> to `0.0.0.0:19387` (otherwise workers can never connect). See *Install* below.
+> **Works out of the box**: restart DSH after install and the bundled patch
+> defaults `role: auto` (no `hubUrl` ⇒ hub), which takes effect automatically.
+>
+> **For workers to connect, the hub's `webserver` must bind one concrete local
+> IP** (DSH binds `127.0.0.1` by default, which workers can never reach). You
+> fill this in once — the panel's *environment health-check* tells you exactly
+> what to put there.
+>
+> ⚠ **Never use `0.0.0.0`**: newer DSH rejects wildcard addresses and will
+> **fail to start**. See *Install* below.
 
 <p align="center">
   <img src="docs/screenshots/panel-main.png" width="720" alt="Web panel: nodes, dispatch form, task list">

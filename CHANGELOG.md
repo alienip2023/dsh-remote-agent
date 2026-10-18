@@ -9,6 +9,108 @@
 
 ---
 
+## [0.9.2] - 2026-10-18
+
+> **紧急修复：0.9.0/0.9.1 会让新版 DSH 启动崩溃。**
+> 如果你装了 0.9.x 并升级过 DSH（0.2.1-rc.2 及以后），**先升级到本版**。
+
+### 🔴 严重事故：包内 patch 绑 `host: '0.0.0.0'` 导致 DSH 启动崩溃
+
+**这是我的错。** 0.9.0 为了让"副机连得上"，在包内 patch 里加了：
+
+```yaml
+- id: webserver
+  config:
+    host: '0.0.0.0'
+    port: 19387
+```
+
+新版 `@deepseek-ai/dsh-host-webserver` 在 **schema 校验阶段**就硬拒绝通配地址：
+
+```
+webserver: host "0.0.0.0" is an unspecified (wildcard) address, which is not
+supported: binding every interface would expose remote code execution to the
+network; bind one concrete IPv4 or IPv6 address of a local interface instead
+```
+
+**后果链**：
+
+```
+webserver（required）激活失败
+  → webServer 服务缺失
+  → 至少 6 个插件排队等它
+    （web-runtime / open-in-app / directory-picker / client-hmr / remote-agent …）
+  → host 启动失败
+```
+
+实测在用户机器上产生 **10 份 crash 日志**（`crash-*.log`）。
+
+**这比它想修的"副机连不上"严重得多：连 DSH 都起不来了。**
+
+### 修复
+
+**包内 patch 不再碰 `webserver` 的任何字段。** 理由：
+
+1. `host` 必须是**具体某个本机接口地址**（Tailscale IP / 局域网 IP），
+   而这个值因人而异 —— 包里写死任何具体 IP 都是错的。
+2. 插件在 `apply()` 里**也不能**自己读网卡再拼配置：loader 的 patch 是
+   启动前静态合并的，改不了自己所在那一行的 config。
+3. 实际做法：**由用户在 profile 里配一次**，插件负责**检测并说清该怎么配**。
+
+配套修正（四处面向用户的文案，它们此前都在建议 `0.0.0.0`）：
+
+- `lib/env-check.js` 的 reachability 修法 → 改为"具体的本机 IP"，并明确警告
+  不能用 0.0.0.0，教会用户 `tailscale ip -4` / `ipconfig` 查地址
+- `lib/client.js` 的红色横幅 → 同上
+- `lib/hub/index.js` 的可达性自检 hint 与 log fix → 同上
+- `README.md` / `README.en.md` 的安装段 → 重写，把"必须绑具体 IP"讲清楚
+
+### 断言方向反转（79 / 新增 79b）
+
+**原来的断言 79 是错的** —— 它要求包内 patch **绑** `0.0.0.0`。现在反过来：
+
+- **79**：包内 patch 的**生效行**不得出现 `- id: webserver` 或
+  `host: '0.0.0.0'`，且必须把事故写进注释留档
+- **79b**：所有面向用户的修法文案都不得建议 `host: 0.0.0.0`，
+  且必须包含"不能用 0.0.0.0"的明确警告
+
+79 只扫**非注释行** —— 注释里必须保留事故原文（含 `0.0.0.0` 示例），
+那是给后来者的警示，不该被判违规。
+
+### 现在"副机连不上"怎么办
+
+包内 patch 不再代你配 `webserver`，所以**新装用户要自己填一次 host**。
+但这件事不再是静默失败：
+
+- 面板加载时**自动体检**，绑 loopback 会显示红色横幅
+- 「环境体检」里的 reachability 项会告诉你**当前绑在哪**、**该改成什么**
+- 提示里直接教怎么查自己的 IP
+
+**填什么**：
+
+```yaml
+- id: webserver
+  config:
+    host: '100.x.x.x'    # ← 换成你自己的地址（推荐 Tailscale IP）
+    port: 19387
+```
+
+查地址：`tailscale ip -4`（跨网，固定不变）或 `ipconfig`（同一局域网）。
+
+### 其他
+
+- 新增 `scripts/diag-worker.ps1` —— 副机诊断脚本（**只读**，不改任何文件），
+  输出 profile 列表、`remote-agent` 配置、插件版本、面板端点探测、
+  配置备份时间线。用于排查"每次重启都回到引导页"这类问题。
+
+```
+packaging   4 项
+doc-drift   121/121
+diag:inject 11 项
+tests       949（948 pass / 0 fail / 1 skip）
+lint        干净
+```
+
 ## [0.9.1] - 2026-10-17
 
 > **0.9.0 发布约 40 分钟后补发**。两个 High 都是真实功能失效

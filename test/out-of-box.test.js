@@ -93,16 +93,27 @@ test('安全：非法 role 不回退 hub（那会静默开无鉴权端点）', (
 
 /* ═══════════════ 2. 包内 patch 让 hub 真能被访问 ═══════════════ */
 
-test('开箱即用：包内 patch 把 webserver 绑到 0.0.0.0:19387', () => {
-  // 这是"副机能不能连上"的**决定性一条**：不覆盖 webserver，hub 只监听
-  // loopback → 副机永远连不上，而主机侧毫无异常。
-  assert.match(patch, /^- id: webserver$/m, '包内 patch 必须 override webserver 行')
-  const i = patch.indexOf('- id: webserver')
-  const seg = patch.slice(i, i + 300)
-  assert.match(seg, /host:\s*'0\.0\.0\.0'/, "webserver 必须绑 0.0.0.0（否则副机连不上）")
-  assert.match(seg, /port:\s*19387/, '端口必须是 19387')
-  // 必须写明安全披露（绑 0.0.0.0 会暴露整个 DSH Web GUI）
-  assert.match(patch, /暴露|安全披露/, '必须披露"绑 0.0.0.0 会暴露 Web GUI"')
+test('开箱即用：包内 patch **不得**绑 webserver 的 host（2026-10-18 事故）', () => {
+  // ⚠ 这个测试原来断言**必须**写 `host: '0.0.0.0'` —— 那正是导致 DSH
+  // 启动崩溃的写法。新版 dsh-host-webserver 在 schema 校验阶段硬拒绝通配地址：
+  //   host "0.0.0.0" is an unspecified (wildcard) address, which is not
+  //   supported: binding every interface would expose remote code execution ...
+  // 后果：webserver（required）激活失败 → webServer 服务缺失 → 至少 6 个插件
+  // 排队等它（含本插件）→ host 启动失败。实测产生 10 份 crash 日志。
+  //
+  // 现在断言**反向**：包内 patch 的生效行不能碰 webserver。
+  // 注释里保留事故原文（含 0.0.0.0 示例）是刻意的留档，不算违规。
+  const codeLines = patch.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n')
+  assert.ok(
+    !/^- id: webserver$/m.test(codeLines),
+    '包内 patch 的生效行不得 override webserver —— host 必须是具体本机 IP，包里无法预知',
+  )
+  assert.ok(
+    !/host:\s*'0\.0\.0\.0'/.test(codeLines),
+    "生效行不得出现 host: '0.0.0.0' —— 新版 DSH 会拒绝并启动崩溃",
+  )
+  // 必须把事故写进注释（防后来者又"帮用户改好"）
+  assert.match(patch, /启动崩溃/, '必须把这个坑写进注释留档')
 })
 
 test('开箱即用：包内 patch 的 role 默认是 auto', () => {

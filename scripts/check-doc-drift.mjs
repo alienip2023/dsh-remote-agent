@@ -929,37 +929,55 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     'lib/env-check.js（可达性/inject/roots/role + fix + 不代下载边界）')
 }
 
-/* ── 79~80. 开箱即用（2026-10-17）──
+/* ── 79~80. 开箱即用（2026-10-17，2026-10-18 修订）──
  *
  * 产品标准：用户装完就该能用，不该读文档、改 YAML、猜字段。
- *
- * 此前三道门槛：
- *   1. `role` 默认 '' → 两台机器都要操作一次
- *   2. `webserver` 没绑 0.0.0.0 → 副机永远连不上（且完全静默）
- *   3. 副机表单 4 个字段 → 小白不知道节点 ID / 工作区填什么
  *
  * 核心设计：`role` 默认 **auto**，按 `hubUrl` 推断。
  *   · 默认 hub → 副机装完以 hub 身份启动，注册无鉴权端点（**攻击面**）
  *   · 默认 ''  → 两台都要操作，不是开箱即用
  *   · 默认 auto → 主机零操作、副机贴完配对码零操作，且不给副机开错端点
+ *
+ * ⚠ **2026-10-18 事故修订**：79 号断言原来**要求**包内 patch 绑
+ * `host: '0.0.0.0'` —— 那正是导致 **DSH 启动崩溃**的写法。新版
+ * `dsh-host-webserver` 在 schema 校验阶段就硬拒绝通配地址：
+ *
+ *     host "0.0.0.0" is an unspecified (wildcard) address, which is not
+ *     supported: binding every interface would expose remote code execution
+ *     to the network; bind one concrete IPv4 or IPv6 address ...
+ *
+ * 后果：webserver（required）激活失败 → webServer 服务缺失 → 至少 6 个插件
+ * 排队等它 → host 启动失败（实测 10 份 crash 日志）。
+ *
+ * 所以断言方向**反过来**：现在要求包内 patch **不碰** webserver 的任何字段，
+ * 且所有提示文案都不得建议 0.0.0.0。
  */
 {
   const indexSrc = read('lib/index.js')
   const patchSrc = read('cordis.patch.yml')
   const clientSrc3 = read('lib/client.js')
   const setupSrc = read('lib/setup-routes.js')
+  const envSrc = read('lib/env-check.js')
+  const hubSrc = read('lib/hub/index.js')
 
-  check('79', '开箱即用：role 默认 auto + 包内 patch 绑 0.0.0.0:19387',
+  // ⚠ 只扫**非注释行**：注释里必须保留那次事故的原文（含 `0.0.0.0` 与
+  // `- id: webserver` 示例），那是给后来者的警示 —— 不该被断言判违规。
+  // 这一点和 L3 断言踩过的坑同源（扫全文会命中"正确留档的注释"）。
+  const patchCode = patchSrc
+    .split('\n')
+    .filter((l) => !/^\s*#/.test(l))
+    .join('\n')
+
+  check('79', '开箱即用：role 默认 auto；且包内 patch **不得**绑 0.0.0.0（会让 DSH 崩溃）',
     /\.default\('auto'\)/.test(indexSrc)
     && /ROLE\.AUTO/.test(indexSrc)
     && /config\.hubUrl/.test(indexSrc)
-    // 包内 patch 必须 override webserver（否则副机连不上）
-    && /^- id: webserver$/m.test(patchSrc)
-    && /host:\s*'0\.0\.0\.0'/.test(patchSrc)
-    && /port:\s*19387/.test(patchSrc)
-    // 必须披露安全影响
-    && /暴露/.test(patchSrc),
-    'lib/index.js（auto 推断）+ cordis.patch.yml（webserver 0.0.0.0:19387 + 安全披露）')
+    // ⚠ 关键：包内 patch 的**生效行**不得 override webserver 的 host
+    && !/^- id: webserver$/m.test(patchCode)
+    && !/host:\s*'0\.0\.0\.0'/.test(patchCode)
+    // 必须把这个坑写进注释（防止后来者又"帮用户改好"）
+    && /启动崩溃/.test(patchSrc),
+    'lib/index.js（auto 推断）+ cordis.patch.yml（生效行不碰 webserver + 事故留档）')
 
   check('80', '开箱即用：副机表单简化 + 工作区自动创建 + 首次自动体检',
     // 工作区预填
@@ -972,6 +990,19 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     && /mkdirSync\(r, \{ recursive: true \}\)/.test(setupSrc)
     && /warnings: applyWarnings/.test(setupSrc),
     'lib/client.js（预填/折叠/自动体检）+ lib/setup-routes.js（自动建目录）')
+
+  // ── 79b：**所有面向用户的修法文案**都不得建议 0.0.0.0 ──────────────
+  //
+  // 这是本次事故最有价值的一条守卫：代码自己不能犯那个错，提示文案也不能。
+  // 检查的是字符串字面量（`host: '0.0.0.0'` 这种形态），不是注释里的说明。
+  check('79b', '所有修法文案都不得建议 host 0.0.0.0（会让 DSH 启动崩溃）',
+    !/host:\s*'0\.0\.0\.0'/.test(clientSrc3)
+    && !/host:\s*'0\.0\.0\.0'/.test(envSrc)
+    && !/加 host:\s*'0\.0\.0\.0'/.test(hubSrc)
+    // 但要**明确警告不能用**它（否则用户可能自己想到这个"标准做法"）
+    && /不能用 0\.0\.0\.0/.test(envSrc)
+    && /不能用 0\.0\.0\.0/.test(clientSrc3),
+    'lib/client.js + lib/env-check.js + lib/hub/index.js（修法不含 0.0.0.0，且有明确警告）')
 }
 
 /* ── 81~82. 工作区 SMB 共享（2026-10-17）──

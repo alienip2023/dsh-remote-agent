@@ -61,9 +61,18 @@ test('可达性：绑 loopback 时判失败，且给具体修法（不是只说"
   const it = byId(r, 'reachability')
   assert.ok(it, '应有 reachability 项')
   assert.equal(it.ok, false, '绑 loopback 必须判失败')
-  assert.match(it.fix, /host:\s*'0\.0\.0\.0'/, '修法必须包含具体配置项 host: \'0.0.0.0\'')
+  // ⚠ 2026-10-18 改：**修法不得建议 0.0.0.0**。
+  // 新版 dsh-host-webserver 在 schema 校验阶段硬拒绝通配地址 → webserver 激活
+  // 失败 → webServer 服务缺失 → **DSH 启动崩溃**（实测 10 份 crash 日志）。
+  // 原断言要求 fix 含 `host: '0.0.0.0'`，那正是崩溃的写法。
+  assert.match(it.fix, /具体的本机 IP/, '修法应要求绑一个具体 IP')
+  assert.ok(
+    !/host:\s*'0\.0\.0\.0'/.test(it.fix),
+    'fix 里绝不能出现 host: 0.0.0.0 —— 那会让 DSH 启动崩溃',
+  )
+  assert.match(it.fix, /不能用 0\.0\.0\.0/i, '必须明确警告不能用 0.0.0.0')
   assert.match(it.fix, /重启/, '修法必须说明要重启')
-  assert.equal(it.autoFix, true, '这一项应标记为可自动修')
+  assert.equal(it.autoFix, true, '这一项应标记为修法机械')
   assert.match(it.detail, /127\.0\.0\.1/, 'detail 应说明当前绑在哪')
 })
 
