@@ -9,6 +9,55 @@
 
 ---
 
+## [0.9.9] - 2026-10-20
+
+> **0.9.8 的 CI 回归修复。** 本地全绿，但 macOS 与 Windows 上失败。
+
+### 修复：测试断言直接比绝对路径（realpath 与平台表示差异）
+
+**现象**（CI run `39389528713`，macOS + Windows 失败，Linux 通过）：
+
+    macOS:   actual '/private/var/folders/.../b.txt'
+             expected '/var/folders/.../b.txt'
+
+    Windows: actual 'C:\Users\runneradmin\AppData\Local\Temp\...\b.txt'
+             expected 'C:\Users\RUNNER~1\AppData\Local\Temp\...\b.txt'
+
+**根因**：`fs-service` 的写操作返回 **realpath 后**的路径 —— 这是**刻意的正确行为**
+（realpath 才能识破软链逃逸与 8.3 短名）。但测试用 `path.join(root, ...)`
+直接比字符串：
+
+- **macOS**：`/var` 是 `/private/var` 的软链
+- **Windows CI**：`RUNNER~1` 是 `runneradmin` 的 8.3 短名
+
+两者都让"直接比字符串"失败。**Linux 恰好没有这层间接，所以本地和 ubuntu 都过。**
+
+**修法**：这条用例真正要验证的是"移动成功且内容对"，不是"路径字符串相等"。
+改成比 `basename` + 文件内容：
+
+```js
+assert.equal(path.basename(r.to), 'b.txt')
+assert.equal(fs.readFileSync(b, 'utf8'), 'A')
+```
+
+### 0.9.8 的四项能力（本版包含）
+
+| 能力 | 关键护栏 |
+|---|---|
+| **一键修复** | 只改托管块 / 写前备份 / 写后校验 / 二次确认 / 可撤销 / 绝不用 0.0.0.0 |
+| **外部工具检测** | 只探测 + 给命令，**不代下载**（守供应链边界）|
+| **写操作 ×4** | confirm 必填 / 默认不覆盖 / 不递归删 / 原子写 / 8MB 上限 / roots 护栏 |
+| **进程诊断 ×3** | kill 三道护栏：confirm / 拒杀自身与父进程 / 拒杀系统关键进程 |
+| **UI 折叠** | 首屏只留当下需要的；配置/体检/共享收进 `<details>` |
+
+```
+packaging   4 项
+doc-drift   131/131
+diag:inject 11 项
+tests       1032（1030 pass / 0 fail / 2 skip）
+lint        干净
+```
+
 ## [0.9.8] - 2026-10-20
 
 ### 四项能力（用户要求：一键修复 / 自动装依赖 / 更多工具 / 重写 UI）

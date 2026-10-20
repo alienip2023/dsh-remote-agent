@@ -145,8 +145,14 @@ test('移动：默认不覆盖目标；跨盘明确报错', () => {
       '目标已存在时默认拒绝',
     )
     const r = svc.move({ from: a, to: b, overwrite: true })
-    assert.equal(r.to, b)
-    assert.equal(fs.readFileSync(b, 'utf8'), 'A')
+    // ⚠ 不能直接比绝对路径 —— fs-service 返回的是 **realpath 后**的路径
+    // （刻意如此：realpath 才能识破软链逃逸与 8.3 短名）。
+    //   · macOS：`/var` 是 `/private/var` 的软链
+    //   · Windows CI：`RUNNER~1` 是 `runneradmin` 的 8.3 短名
+    // 两者都会让"直接比字符串"失败（CI 抓到过）。
+    // 用 basename + 文件内容判断，这才是这条用例真正要验证的东西。
+    assert.equal(path.basename(r.to), 'b.txt', '移动目标应是 b.txt')
+    assert.equal(fs.readFileSync(b, 'utf8'), 'A', '内容应来自 a.txt')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
