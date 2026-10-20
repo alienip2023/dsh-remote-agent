@@ -572,6 +572,8 @@ $env:DSH_REMOTE_PWSH = 'C:\nope\pwsh.exe'
 2. **registry 上下线实时性**：worker 在线时 `healthz` 报 `online:2`，
    进程退出后数秒内回落到 `online:1` —— 真实 webServer 路由下的
    在线状态检测是活的。
+   （0.9.3 起计数只回给带正确 `x-dsh-token` 的请求；匿名只回 `{ ok: true }`，
+   见 CHANGELOG 0.9.3 的 L4 条。）
 3. **UI 围栏确认（安全结论，非缺陷）**：hub 的 webserver 除 `/healthz`
    外**整台 401**（`/`、`/index.html`、`/ui/config`、`/ui/overview` 全中）
    —— 没有桌面会话的请求一律被 `requestRejection` 拦掉。这意味着：

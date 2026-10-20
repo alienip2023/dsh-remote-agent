@@ -1113,7 +1113,7 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     })(),
     'lib/hub/ui-routes.js（role: resolveRole(config) 而非原始 config.role）')
 
-  check('85', 'SMB 面板发真实 dir + CLI doctor 有 loopback 检查（H2 / M1）',
+  check('85', 'SMB 面板发真实 dir + CLI doctor 走独立监听判可达性（H2 / M1 / H5）',
     // H2：不得写死 dir: ''
     (() => {
       const i = clientSrc5.indexOf('function doPlan()')
@@ -1125,8 +1125,17 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     && /nodeRoots/.test(clientSrc5)
     // M1：CLI 必须调 envChecks（否则没有 loopback 诊断）
     && /envChecks/.test(setupBin)
-    && /isLoopbackOrigin/.test(setupBin),
-    'lib/client.js（dir: shareDir + nodeRoots UI）+ bin/dsh-remote-setup.js（envChecks）')
+    // H5：回环判据必须来自 listen-server（一份实现），不是 CLI 自己拼 origin
+    && /isLoopbackHost/.test(setupBin)
+    // H5 负向守卫：CLI **不得**再从 patch 里找 webserver 段判可达性。
+    // 0.9.3 起端点由插件自己的独立监听承载，webserver 的 host 与副机接入
+    // 毫无关系 —— 读了会把人引向"改 webserver"这个改了也会被冲掉的死路。
+    // ⚠ 扫**剥注释后**的代码：注释里必须保留事故说明（含 `- id: webserver`
+    // 字样），那是给后来者的警示，不该被这条断言判违规。
+    && !/- id:\s*webserver/.test(stripComments(setupBin))
+    // 生效配置以 instance.json 为准（否则体检报告的是已失效的 patch 值）
+    && /readInstanceConfig/.test(setupBin),
+    'lib/client.js（dir: shareDir + nodeRoots UI）+ bin/dsh-remote-setup.js（envChecks + listen-server 判据）')
 }
 
 /* ── 86~87. 独立监听端口（2026-10-18，架构级修复）──

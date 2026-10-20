@@ -9,6 +9,119 @@
 
 ---
 
+## [0.9.3] - 2026-10-20
+
+> **架构级修复：插件自己开端口，副机拨入不再依赖 DSH 的 `webserver`。**
+>
+> ⚠ **0.9.2 那段"去 patch 里给 `webserver` 填一个具体 host"的做法从本版起
+> 作废** —— 不用填了，填了也会被 DSH 每次启动重写掉。详见下节。
+>
+> ⚠ 0.9.3 首版（tag `349c8c5`）**CI 是红的**（win + ubuntu 全红、本地实测
+> 20 fail）却照样发了 npm。本条目记录的就是修复这批问题后的定版。
+
+### 为什么必须换架构（三个死结，均实证）
+
+| 死结 | 现象 |
+|---|---|
+| **patch 被重写** | DSH 每次启动都重写 `cordis.patch.yml`，实测 3962B / 15 条 → **661B / 3 条**，写进去的 `webserver` 段被删光 |
+| **webServer 无 rebind** | `webServer` 服务激活即 `listen`，没有改绑方法，插件拿不到控制权 |
+| **硬拒通配地址** | 新版 `dsh-host-webserver` 在 schema 阶段就拒绝 `0.0.0.0`，绑了就 **DSH 启动崩溃**（已产生 10 份 crash 日志） |
+
+结论：**副机端点不能再挂在 `ctx.webServer` 上。**
+
+### 新方案
+
+- **`lib/listen-server.js`** —— 用 `node:http` 自己开一个只服务节点端点的小
+  server：`GET <healthPath>` 回 200 JSON，`Upgrade: websocket` 复用 `ws.js`
+  的 `acceptUpgrade`，**路径精确匹配**，其它一律 404；关闭时追踪并断开所有连接。
+- **绑址优先链**：`listenHost` > Tailscale IP（`100.64.0.0/10`）> RFC1918 私网
+  > 任意非回环 > `127.0.0.1`；**拒绝** `0.0.0.0` / `::` / `[::]`。
+  默认端口 **19387**，`listenPort: 0` = 关闭独立监听。
+- **`lib/instance-config.js`** —— 配置分层：patch 只负责"让 loader 加载插件"，
+  真配置存 `<stateDir>/instance.json`（**0600 + 原子写 + 字段白名单**）。
+  `mergeInstanceConfig` 合并时**独立配置优先**，`apply()` 里重新归一化。
+- **安全边界**：token 校验仍是同一份逻辑，独立监听不降低门槛。
+
+### 本版修掉的 19 个问题（0.9.3 首版审查）
+
+**High**
+
+- **H1 `nodeToken` 为空时端点暴露到网络** —— 现在 token 为空且没显式指定可达
+  `listenHost` 时**强制绑 `127.0.0.1`**，面板给黄色提示引导去「生成口令」。
+- **H2 setup 表单只管 6 个字段，写盘却整块重写** —— 用户在 YAML 里手写的
+  `uiPullRoot` / `listenHost` 等被静默抹掉。新增 `extractPreservedConfig`
+  文本级切分，**只覆盖表单管辖的键**（`role/nodeId/transportMode/hubUrl/
+  relayUrl/roots`），其余原样保留。
+- **H3 面板没有生成口令的入口** —— token 为空时只能看到"绑回环"却无路可修。
+  新增 `POST /setup/rotate-token`（**仅接受回环请求**），面板加「生成口令」
+  按钮（带二次确认），明文只回一次。
+- **H4 CI 连红两次还发了 npm** —— `test/doc-drift-selfcheck.test.js` 的手工
+  复制清单漏了 `lib/listen-server.js`，副本里 `read()` 抛 ENOENT → **20 个
+  自检用例全挂**（不是单条断言失败）。这是同一规矩**第六次**被踩。
+  结构性修复：改成**自动扫 `lib/*.js` 全量复制**，手工清单只管目录与非 js 目标。
+- **H5 架构换了，诊断层没换** —— reachability 快照、`/env-check`、面板横幅、
+  README 全停留在 `webserver` 语义 → **面板报假红**（独立监听 19387 明明在跑）
+  并教用户做无效操作（改 webserver host，改了也会被冲掉）。现在：
+  `reachability` 变**两层结构 + getter**（运行时绑定后动态求值），
+  新增 `listener` 四态（未就绪 / 就绪 / 已关闭 / 失败），横幅三态
+  （正常不显示 / 绑回环黄条 / 启动失败红条），README 安装段重写。
+
+**Medium**
+
+- **M1 `writeInstanceConfig(values)` 没传 `config`** —— 写默认 stateDir，而读
+  的一方按 `config.stateDir` 找，两边对不上。补上第二个参数。
+- **M2 `listenHost` / `listenPort` / `relay` 不在持久化白名单** —— 写进
+  instance.json 会被静默丢弃。`PERSISTED_KEYS` 补齐，`relay` 按对象白名单
+  （`url` / `token`）处理；schema 也补上 `listenHost` / `listenPort` 声明
+  （此前靠 schemastery passthrough 生效，**无表单、无校验**）。
+- **M3 instance.json 静默覆盖 patch 值** —— 现在 `mergeInstanceConfig` 返回
+  `shadowed: string[]`，`apply()` 里 `log('info', …)` 明示谁覆盖了谁；
+  `--doctor` 也会报告"instance.json 覆盖了 patch 的：…"。
+- **M4 配对码端口取错** —— 用的是浏览器地址栏的端口（DSH 的 webserver 端口，
+  常见 58626），而副机该拨的是 19387。现在从 `listenRuntime` 取**实际绑定端口**，
+  响应带 `portSource`，并给每个候选地址标 `usable`（只有与本机绑定地址一致的
+  才算可用，可用项排最前）。
+- **M5 CLI 写盘路径不写 instance.json** —— 向导/`--apply` 写完 patch 后，
+  重启 DSH 又会被重写。`offerWrite` / `applyWrite` 增加 `persist` 参数，
+  成功后同步写独立配置。
+
+**Low / Info**
+
+- **L1 `server.on('error')` 在 listen 成功后无声吞错** —— 加 `settled` 闸门：
+  首次 reject，之后转 `log('error', 'listen server error (runtime)')`。
+- **L2 回环判据三份实现**（listen-server / env-check / 面板各写一份）——
+  统一导出 `isLoopbackHost()`，其余全部 import。
+- **L3 `explicitPort` 判断看的是归一化后的值** —— 改成看**原始 config 是否
+  有该键**（否则"没填"和"填了默认值"无法区分）。
+- **L6 候选地址顺序随网卡枚举变化** —— `listCandidateAddresses()` 按
+  `score`（Tailscale=0 / 私网=1 / 其它=2）+ 接口名 + 地址稳定排序，
+  避免同一台机器两次启动绑到不同 IP。
+
+### 断言与门禁
+
+- **85 改向**：要求 CLI `--doctor` 用 `listen-server` 的回环判据，
+  并**负向守卫**——不得再从 patch 里找 `- id: webserver` 判可达性
+  （扫剥注释后的代码，注释里的历史留档不算违规）。
+- **79b 加固**：三处面向用户的文案必须同时满足"不建议 `0.0.0.0`"与
+  "包含不能用 `0.0.0.0` 的警告"。
+- 自检不再依赖 import 的**排版**（`writePatchBlock` 的断言改为匹配符号
+  而非单行字面量）—— 断言的是依赖关系，不是格式。
+
+```
+packaging   4 项
+doc-drift   123/123
+diag:inject 11 项
+tests       982（980 pass / 0 fail / 2 skip）
+lint        干净（eslint 严格档，含 bin/ 与 test/）
+```
+
+### 升级须知
+
+- **不用再给 `webserver` 填 host**。之前填过的可以删掉（留着也无害，DSH 会
+  自己重写掉）。
+- 想固定绑哪个地址：`listenHost: '100.x.x.x'`；端口冲突就换 `listenPort`。
+- 防火墙要放行的是 **`listenPort`（默认 19387）**，不再是 DSH 的 Web 端口。
+
 ## [0.9.2] - 2026-10-18
 
 > **紧急修复：0.9.0/0.9.1 会让新版 DSH 启动崩溃。**

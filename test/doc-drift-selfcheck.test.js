@@ -36,10 +36,13 @@ function makeCopy(t) {
   // 以及断言 28 检查存在性的那些维护设施（CHANGELOG/CONTRIBUTING/SECURITY/
   // .editorconfig/.github/*）。
   //
-  // ⚠ 这个清单是**脆弱点**：check-doc-drift 每新增一个 read() 目标，
-  // 这里就要跟着加，否则所有用例都会因 ENOENT 失败（而不是因为断言失效）。
-  // 已经踩过三次（漏 lib/client.js、漏 README.md、漏 deploy/）。
-  // 加目标时的稳妥做法：本地跑 `npm test`，若整批失败且错误是 ENOENT，就是这里漏了。
+  // ⚠ 这个清单只负责**目录**与**非 js 目标**（lib/hub、lib/node、deploy、
+  // docs、scripts、test、bin、.github…）。
+  //
+  // `lib/` **根目录下的 .js 不用再往这里加** —— 2026-10-20 起由下面的
+  // "自动补全 lib/*.js" 兜底。在此之前这条手工规矩被证伪六次
+  // （client / identity / e2e / env-check / setup-routes / listen-server），
+  // 每次都是整批自检 ENOENT 而不是单条断言失效。
   const entries = [
     'lib/client.js',
     'lib/index.js',
@@ -104,6 +107,30 @@ function makeCopy(t) {
     const dst = path.join(dir, rel)
     fs.mkdirSync(path.dirname(dst), { recursive: true })
     fs.cpSync(src, dst, { recursive: true })
+  }
+
+  // ── 自动补全 `lib/` 根目录下的所有 .js（2026-10-20 结构性修复）──────────
+  //
+  // 上面那份手工清单是**已被证伪的规矩**：注释里写着"lib/ 根下新文件必须单列"，
+  // 实测漏了 client / identity / e2e / env-check / setup-routes / **listen-server**
+  // 共六次。每次症状都一样 —— 副本里没这个文件 → `read()` 抛 ENOENT →
+  // **整个脚本崩** → 这批自检用例全红（不是断言失效，是脚本根本没跑完）。
+  //
+  // 所以不再依赖人工维护：直接扫 `lib/*.js` 全量复制。清单继续保留，它负责
+  // 目录（lib/hub、lib/node、deploy、docs…）与非 js 的可读目标。
+  //
+  // ⚠ 这条只在"目录存在"时生效；lib 本身缺失属于仓库损坏，交给后续 ENOENT 暴露。
+  try {
+    const libRoot = path.join(ROOT, 'lib')
+    for (const f of fs.readdirSync(libRoot, { withFileTypes: true })) {
+      if (!f.isFile() || !f.name.endsWith('.js')) continue
+      const dst = path.join(dir, 'lib', f.name)
+      if (fs.existsSync(dst)) continue // 清单里已显式复制过
+      fs.mkdirSync(path.dirname(dst), { recursive: true })
+      fs.copyFileSync(path.join(libRoot, f.name), dst)
+    }
+  } catch {
+    /* lib 缺失：让 runCheck 的 ENOENT 如实报出来，不在这里吞掉语义 */
   }
   t.after(() => {
     try {

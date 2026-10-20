@@ -36,7 +36,9 @@ import { encodePairCode, decodePairCode } from '../lib/pairing.js'
 // loopback 诊断** —— 而它正是本版本最重要的那条。现在两段都跑、结果合并。
 // resolveRole 保证 auto 被推断成实际角色（与运行时同一份实现）。
 import { resolveRole } from '../lib/index.js'
-import { envChecks, isLoopbackOrigin } from '../lib/env-check.js'
+import { envChecks } from '../lib/env-check.js'
+import { resolveListenHost, isLoopbackHost } from '../lib/listen-server.js'
+import { readInstanceConfig, writeInstanceConfig } from '../lib/instance-config.js'
 import { IDENTITY_FILE_NAME, readHubIdentity } from '../lib/identity.js'
 
 const DIM = '\x1b[2m'
@@ -114,8 +116,12 @@ function printYaml(name, yaml, outFile) {
 /**
  * 询问并把 YAML 写进本机 DSH 配置（备份 → 托管块合并 → 校验，失败自动回滚）。
  * 写盘是零终端小白的"最后一公里"：不用自己找配置文件、开编辑器、粘 YAML。
+ *
+ * @param {object} [persist] 同时写入 `<stateDir>/instance.json` 的字段（2026-10-20，M5）。
+ *   patch 那层会被 DSH 每次启动重写冲掉，instance.json 才是"重启后配置还在"的保障。
+ *   面板配的走这条，CLI 配的也必须走 —— 否则同一台机器换个配置方式行为就不同。
  */
-async function offerWrite(rl, values, yaml, roleLabel) {
+async function offerWrite(rl, values, yaml, roleLabel, persist = null) {
   if (values['no-write']) return false
   const profile = String(values.profile ?? '').trim() || 'desktop'
   const file = patchFilePath(profile)
@@ -129,15 +135,29 @@ async function offerWrite(rl, values, yaml, roleLabel) {
     validate: (v) => (['y', 'yes', 'n', 'no', '1', '0'].includes(v.toLowerCase()) || '输 Y 或 N'),
   })
   if (!['y', 'yes', '1'].includes(yes.toLowerCase())) return false
-  return applyWrite({ file, blockYaml: yaml, force: values.force === true })
+  return applyWrite({ file, blockYaml: yaml, force: values.force === true, persist })
 }
 
 /** 非交互写盘执行 + 结果播报。返回 true = 成功。 */
-function applyWrite({ file, blockYaml, force }) {
+function applyWrite({ file, blockYaml, force, persist = null }) {
   const r = writePatchBlock({ file, blockYaml, force })
   if (r.ok) {
     say(`  ✓ 已${r.mode === 'replaced' ? '更新（原托管块替换）' : '写入（追加托管块）'} ${r.file}`)
     say(`    （原文件已备份：${r.backup}）`)
+    // 独立配置这一层（2026-10-20）：DSH 会重写 patch，只有这里存的能扛住
+    if (persist && typeof persist === 'object') {
+      try {
+        const prev = readInstanceConfig({}) ?? {}
+        const next = { ...prev }
+        for (const k of Object.keys(persist)) if (persist[k] === undefined) delete next[k]
+        Object.assign(next, persist)
+        const w = writeInstanceConfig(next, {})
+        if (w.ok) say(`  ✓ 已写入独立配置 ${w.file}（DSH 重写 patch 也不会丢）`)
+        else hint(`  ⚠ 独立配置写入失败（${w.error}）—— 重启后角色配置可能被 DSH 冲掉`)
+      } catch (err) {
+        hint(`  ⚠ 独立配置写入异常（${String(err?.message ?? err)}）—— 不影响本次 patch 写入`)
+      }
+    }
     hint('  重启 DSH 后生效。')
   } else {
     say(`  ✗ ${r.error}`)
@@ -177,7 +197,36 @@ async function runDoctor(positionals) {
     pair: grab('pair'),
     roots,
     uiPullRoot: grab('uiPullRoot'),
+    // 独立监听（v0.9.3 起的主通道）。listenPort 必须是 number —— 0 有语义
+    // （= 关闭），所以不能用 `Number(x) || 19387` 那种写法把它吃掉。
+    listenHost: grab('listenHost'),
+    listenPort: (function () {
+      const v = grab('listenPort')
+      if (v === '') return 19387
+      const n = Number(v)
+      return Number.isFinite(n) && n >= 0 ? n : 19387
+    })(),
   }
+
+  // ⚠ 独立配置优先（v0.9.3 审查 M2/M3）：DSH 每次启动都会重写 patch，
+  // 真正生效的字段存在 `<stateDir>/instance.json` 里并**覆盖** patch 的值。
+  // 只读 patch 体检 = 报告一个已经不在生效的配置（比如用户在面板里改了
+  // listenPort，patch 里还是旧的 19387）。
+  //
+  // 先拍一张 patch 快照，合并之后再拿它比对 —— 否则"谁覆盖了谁"永远看不出
+  // （config 已被改写，比较恒等）。
+  const patchSnapshot = { ...config }
+  let instanceSrc = null
+  try {
+    const saved = readInstanceConfig({})
+    if (saved && typeof saved === 'object') {
+      for (const k of Object.keys(saved)) {
+        if (!(k in config)) continue
+        if (saved[k] !== undefined) config[k] = saved[k]
+      }
+      instanceSrc = saved
+    }
+  } catch { /* 读不到就当没有 */ }
 
   // 角色解析用**与运行时同一份实现**（唯一真相）：auto 在这里被推断成
   // 实际角色，这样 doctor 报告的 role 与 hub 实际行为一致。
@@ -204,30 +253,60 @@ async function runDoctor(positionals) {
   //
   // 探测参数：CLI 能真探测的才传，拿不到的留 null（envChecks 会跳过该项，
   // 不会误报）。
-  //   · webserver host 从配置文件里读（静态可判 —— 正是 loopback 检查的关键）
+  //   · 独立监听：从 **生效配置**（instance.json 覆盖后）用与运行时同一份
+  //     `resolveListenHost` 算出来，再用本机 TCP 探活判断"插件是否真在听"
   //   · roots 存在性真查文件系统
+  //
+  // ⚠ **绝不能再从 patch 里读 `- id: webserver`**（v0.9.3 审查 H5 的 CLI 侧）：
+  // 0.9.3 起端点由插件自己的独立监听承载，webserver 的 host 与副机能否接入
+  // **毫无关系**。老代码读到 `host: 127.0.0.1` 就报"副机连不上，去改
+  // webserver"，把用户引向一个改了也会被 DSH 重写冲掉、且修不好的方向。
   try {
-    const wsHost = grab('host')
-    const wsPort = grab('port')
-    // 从配置里找 webserver 段（形如 `- id: webserver` 之后几行的 host/port）
-    const wsBlock = /- id:\s*webserver[\s\S]{0,400}?host:\s*['"]?([^'"\n]+)['"]?[\s\S]{0,120}?port:\s*(\d+)/.exec(raw)
-    const boundHost = wsBlock ? wsBlock[1].trim() : (wsHost || '')
-    const boundPort = wsBlock ? Number(wsBlock[2]) : (Number(wsPort) || 19387)
-    const loopback = isLoopbackOrigin(`http://${boundHost || '127.0.0.1'}:${boundPort}`)
+    const listenPort = config.listenPort
+    const tokenBlank = config.nodeToken === ''
+    const explicitNonLoop = config.listenHost !== '' && !isLoopbackHost(config.listenHost)
+    // 与 applyHub 同一条安全策略：token 为空且没显式指定可达地址 → 强制回环
+    const pick = listenPort === 0
+      ? { host: '', source: 'disabled' }
+      : (tokenBlank && !explicitNonLoop
+          ? { host: '127.0.0.1', source: 'loopback-no-token' }
+          : resolveListenHost({ listenHost: config.listenHost }))
+
+    // 本机 TCP 探活：能连上 = 插件此刻确实在听（比"配置看起来对"强得多）
+    let alive = null
+    if (pick.host !== '') {
+      const probe = await probeTcp(isLoopbackHost(pick.host) ? '127.0.0.1' : pick.host, listenPort)
+      if (probe.ok) alive = true
+      else if (probe.error === 'ECONNREFUSED') alive = false
+      // 其它错误（超时/EHOSTUNREACH）→ 无法判定，保持 null
+    }
+
+    const listener = {
+      // 连不上时**不要**断言"启动失败"：DSH 可能根本没在跑（CLI 常在停机时用）
+      ok: pick.host === '' ? false : alive,
+      disabled: pick.host === '' ? '配置里 listenPort: 0（显式关闭独立监听）' : '',
+      host: pick.host,
+      port: listenPort,
+      source: pick.source,
+      error: alive === false ? `本机 ${listenPort} 端口没有在听（DSH 未运行？或端口被占）` : '',
+    }
+
     const missingRoots = config.roots.filter((r) => {
       try { return !fs.existsSync(r) } catch { return true }
     })
     const env = envChecks({
       role: resolvedRole || 'hub',
       config,
-      reachability: boundHost === '' && !wsBlock
+      reachability: pick.host === ''
         ? null
         : {
-          bound: boundHost,
-          origin: `http://${boundHost || '127.0.0.1'}:${boundPort}`,
-          loopback: loopback === true,
+          bound: pick.host,
+          origin: `${pick.host}:${listenPort}`,
+          loopback: isLoopbackHost(pick.host),
+          via: 'listen-server',
           hint: '',
         },
+      listener,
       missingRoots,
     })
     // 合并：envChecks 的项追加到 CLI 结果后（格式一致：{ok, label, fix}）
@@ -237,6 +316,20 @@ async function runDoctor(positionals) {
         // 带上 emoji 级的严重度提示：warn 不算失败但要看得见
         label: `${it.label}${it.detail ? ` —— ${it.detail}` : ''}`,
         fix: it.fix,
+      })
+    }
+
+    // 独立配置来源提示：patch 与 instance.json 不一致时说明以谁为准
+    if (instanceSrc && typeof instanceSrc === 'object') {
+      const overridden = ['role', 'hubUrl', 'listenHost', 'listenPort']
+        .filter((k) => instanceSrc[k] !== undefined
+          && String(instanceSrc[k]) !== String(patchSnapshot[k] === undefined ? '' : patchSnapshot[k]))
+      checks.push({
+        ok: true,
+        label: overridden.length === 0
+          ? '独立配置 instance.json 已加载（与 patch 一致）'
+          : `独立配置 instance.json 覆盖了 patch 的：${overridden.join(' / ')}（DSH 重写 patch 也不会丢）`,
+        fix: '',
       })
     }
   } catch (err) {

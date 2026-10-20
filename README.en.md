@@ -37,7 +37,7 @@ explicitly pull them.
 | **Platforms** | Windows (fully verified) · Linux / macOS (CI covered) |
 | **Dependencies** | **Zero external npm dependencies** —— `node:` built-ins only |
 | **Node** | `^22.19.0 \|\| >=24.0.0` |
-| **Tests** | 938 (937 pass / 1 skip) · 118 doc-drift assertions · eslint strict |
+| **Tests** | 982 (980 pass / 2 skip) · 123 doc-drift assertions · eslint strict |
 
 **Web panel**（sidebar → "远程同事" / Remote co-worker）：node list with CPU /
 memory badges, task dispatch, task states, result summaries, workspace changes,
@@ -47,13 +47,15 @@ change diffs (unified diffs of text-file edits), final artifacts, log tail,
 > **Works out of the box**: restart DSH after install and the bundled patch
 > defaults `role: auto` (no `hubUrl` ⇒ hub), which takes effect automatically.
 >
-> **For workers to connect, the hub's `webserver` must bind one concrete local
-> IP** (DSH binds `127.0.0.1` by default, which workers can never reach). You
-> fill this in once — the panel's *environment health-check* tells you exactly
-> what to put there.
+> **Workers connect to the plugin's own port — no DSH config to touch.**
+> Since 0.9.3 the plugin runs its own listener (default **19387**) that workers
+> dial directly; it does **not** go through `webserver`, so you never edit a
+> `host` in `cordis.patch.yml`.
 >
-> ⚠ **Never use `0.0.0.0`**: newer DSH rejects wildcard addresses and will
-> **fail to start**. See *Install* below.
+> The bind address is chosen automatically: `listenHost` (if set) > Tailscale
+> IP > LAN IP > loopback. Set `listenHost: '100.x.x.x'` to pin it.
+> **`0.0.0.0` is always rejected** (newer DSH refuses wildcard addresses —
+> binding one crashes DSH on startup). See *Install* below.
 
 <p align="center">
   <img src="docs/screenshots/panel-main.png" width="720" alt="Web panel: nodes, dispatch form, task list">
@@ -243,6 +245,23 @@ in-package patch inserts it automatically):
   config:
     role: hub
 ```
+
+**No `webserver` tuning needed.** The plugin listens on its own port (default
+`19387`) and workers dial that, so the DSH web server's bind address is
+irrelevant. Optional overrides:
+
+```yaml
+  config:
+    role: hub
+    listenHost: '100.x.x.x'   # optional: blank = auto (Tailscale > LAN > loopback)
+    listenPort: 19387         # optional: default 19387; 0 = disable the listener
+```
+
+> **Security policy: no token, no network exposure.** With an empty
+> `nodeToken` the listener binds `127.0.0.1` only (same-machine `both` mode
+> still works) and the panel shows a **yellow** banner pointing at
+> “生成口令”. Generate one and restart DSH to get the reachable address back.
+> To override deliberately, set a concrete non-loopback `listenHost`.
 
 ### Worker
 

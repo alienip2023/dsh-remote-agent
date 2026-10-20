@@ -162,10 +162,14 @@ function startHttpServer() {
 }
 
 /** 极简的 HTTP GET（不用 fetch，避免 undici keep-alive 挂住测试）。 */
-function httpGet(port, p) {
+function httpGet(port, p, token = '') {
   return new Promise((resolve, reject) => {
+    const headers = { connection: 'close' }
+    // v0.9.3 审查 L4：healthz 改成按身份分级 —— 匿名只见 `{ ok: true }`。
+    // 要拿详情必须带 `x-dsh-token`（与节点端点同一个头）。
+    if (token !== '') headers['x-dsh-token'] = token
     const req = http.request(
-      { host: '127.0.0.1', port, method: 'GET', path: p, agent: false, headers: { connection: 'close' } },
+      { host: '127.0.0.1', port, method: 'GET', path: p, agent: false, headers },
       (res) => {
         const chunks = []
         res.on('data', (c) => chunks.push(c))
@@ -229,7 +233,7 @@ function startRelay(t) {
  * @param {'relay'|'direct'} o.mode
  * @param {object} [o.relay] relay 句柄（relay 模式必填）
  */
-async function setup(t, { root, mode, relay, resourceIntervalMs }) {
+async function setup(t, { root, mode, relay, resourceIntervalMs, nodeToken = '' }) {
   const wsRoot = path.join(root, 'ws')
   fs.mkdirSync(wsRoot, { recursive: true })
 
@@ -240,6 +244,10 @@ async function setup(t, { root, mode, relay, resourceIntervalMs }) {
   // ~/.dsh-remote-agent/），审计事件就会写进真实证据链 —— 真机验证揪出
   // （docs/verification-repos-routing-real.md §4⑤），跑一次测试写 14 行。
   const hubConfig = { role: 'hub', systemPrompt: false, stateDir: path.join(root, 'hub-state') }
+  // 口令（可选）：给了才测得到 healthz 的"已鉴权"分支。
+  // 同时影响独立监听的安全策略（token 非空才允许绑非回环），
+  // 不过测试环境下独立监听默认是关的，不占端口。
+  if (nodeToken !== '') hubConfig.nodeToken = nodeToken
   if (mode === 'relay') {
     hubConfig.relay = { url: relay.url, token: relay.hubToken }
   }
@@ -325,6 +333,7 @@ async function setup(t, { root, mode, relay, resourceIntervalMs }) {
     tool,
     tools: hubCtx.toolDefs,
     httpGet: (p) => httpGet(port, p),
+    httpGetAuthed: (p) => httpGet(port, p, nodeToken),
   }
 }
 
@@ -357,7 +366,8 @@ async function runExecTask(t, env, { goal, workspace, outputs, timeoutMs, approv
 test('hub⇄worker e2e（relay）：remote_task → accept → 完成 → handoff 卡片', async (t) => {
   const root = tmpRoot(t)
   const relay = await startRelay(t)
-  const env = await setup(t, { root, mode: 'relay', relay })
+  // 带上口令：healthz 的详情只有已鉴权才拿得到（L4 分级）
+  const env = await setup(t, { root, mode: 'relay', relay, nodeToken: 'nt_e2e_health' })
 
   // remote_nodes 能看到这台副机
   const nodes = await env.tool('remote_nodes')({})
@@ -370,8 +380,9 @@ test('hub⇄worker e2e（relay）：remote_task → accept → 完成 → handof
   assert.equal(nodes.nodes[0].os, IS_WIN ? 'windows' : IS_MAC ? 'darwin' : 'linux')
   assert.ok(nodes.nodes[0].roots.includes(env.wsRoot))
 
-  // healthz 也确认节点注册（比间接推断更硬）
-  const hz = await env.httpGet('/api/remote-agent/healthz')
+  // healthz 也确认节点注册（比间接推断更硬）。⚠ 必须带口令 —— 匿名请求
+  // 只回 `{ ok: true }`（v0.9.3 审查 L4：不给扫描器送插件指纹）。
+  const hz = await env.httpGetAuthed('/api/remote-agent/healthz')
   assert.equal(hz.status, 200)
   assert.equal(hz.json.ok, true)
   assert.equal(hz.json.plugin, 'dsh-remote-agent')
@@ -653,6 +664,69 @@ test('hub⇄worker e2e：healthz 与 remote_nodes 响应不含凭证字样', asy
   assert.equal(hz.text.includes(relay.enrollToken), false)
   assert.equal(nodeText.includes(relay.hubToken), false)
   assert.equal(nodeText.includes(relay.enrollToken), false)
+})
+
+/* ══════════════════════════════════════════════════════════════════
+ * 用例 4b：healthz 按身份分级（v0.9.3 审查 L4）
+ *
+ * 这个端点**无鉴权**。原实现把 `plugin: dsh-remote-agent / role: hub /
+ * protocol` 直接回给任何人 —— 等于告诉扫描器"这台机器装了会执行远程命令
+ * 的插件"，正是最值得挑的目标。
+ *
+ * 现在的契约：
+ *   匿名 / 错口令 → 只有 `{ ok: true }`（连插件名都不给）
+ *   正确口令      → 完整信息（plugin / role / protocol / 计数）
+ * ══════════════════════════════════════════════════════════════════ */
+
+test('hub⇄worker e2e：healthz 匿名只回 { ok: true }，带口令才给详情', async (t) => {
+  const root = tmpRoot(t)
+  const relay = await startRelay(t)
+  const env = await setup(t, { root, mode: 'relay', relay, nodeToken: 'nt_health_split' })
+
+  // ① 匿名：只认 ok，任何指纹字段都没有
+  const anon = await env.httpGet('/api/remote-agent/healthz')
+  assert.equal(anon.status, 200)
+  assert.deepEqual(anon.json, { ok: true }, `匿名应只拿到 { ok: true }，实际 ${anon.text}`)
+
+  // ② 错口令：与匿名同等待遇（不能因为"试错"泄露更多）
+  const wrong = await new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: env.port,
+        method: 'GET',
+        path: '/api/remote-agent/healthz',
+        agent: false,
+        headers: { connection: 'close', 'x-dsh-token': 'nt_wrong_token' },
+      },
+      (res) => {
+        const chunks = []
+        res.on('data', (c) => chunks.push(c))
+        res.on('end', () => {
+          let json
+          try {
+            json = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+          } catch {
+            json = undefined
+          }
+          resolve({ status: res.statusCode, json })
+        })
+      },
+    )
+    req.on('error', reject)
+    req.end()
+  })
+  assert.deepEqual(wrong.json, { ok: true }, '错口令不得泄露详情')
+
+  // ③ 正确口令：拿到完整信息
+  const ok = await env.httpGetAuthed('/api/remote-agent/healthz')
+  assert.equal(ok.status, 200)
+  assert.equal(ok.json.ok, true)
+  assert.equal(ok.json.plugin, 'dsh-remote-agent')
+  assert.equal(ok.json.role, 'hub')
+  assert.equal(ok.json.protocol, PROTOCOL_VERSION)
+  assert.equal(ok.json.nodes, 1)
+  assert.equal(ok.json.online, 1)
 })
 
 /* ══════════════════════════════════════════════════════════════════

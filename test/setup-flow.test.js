@@ -199,7 +199,10 @@ test('setup apply 让 inject 跟着 role 走（不再出现改了 role 忘改 in
 })
 
 test('setup apply 走 writePatchBlock（备份 + 托管块 + 回滚）', () => {
-  assert.match(setupRoutes, /import \{ writePatchBlock \} from '\.\/setup\.js'/, '应复用 setup.js 的安全写盘')
+  // ⚠ 这里只断言"从 ./setup.js 导入了 writePatchBlock"，**不锚定 import 的排版**。
+  // 2026-10-20 修 H2 时这条 import 扩成了多行（多导入了 extractPreservedConfig
+  // 等三个符号），原来写死的单行字面量就误报了 —— 被断言的是依赖关系，不是格式。
+  assert.match(setupRoutes, /import \{[^}]*\bwritePatchBlock\b[^}]*\} from '\.\/setup\.js'/, '应复用 setup.js 的安全写盘')
   const code = stripComments(setupRoutes)
   assert.match(code, /writePatchBlock\(\{ file, blockYaml/, '应调 writePatchBlock')
 })

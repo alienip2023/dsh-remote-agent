@@ -351,7 +351,9 @@ Node 24 下会把目录当模块入口，必然失败。用 `npm test`（内部�
 3. **角色**（`config.role`）与**传输方式**（`transportMode`）
 4. **现象 + 复现步骤**
 5. **日志**：
-   - 主机侧：面板「日志尾部」区，或 `/api/remote-agent/healthz`
+   - 主机侧：面板「日志尾部」区，或 `GET /api/remote-agent/healthz`
+     带 `x-dsh-token: <nodeToken>` 头（匿名只回 `{ "ok": true }`，
+     拿不到节点/任务计数 —— 0.9.3 起的分级策略）
    - 副机侧：`%TEMP%\dsh-remote-agent-diag.log`（若有）
    - 启动日志：`<DSH_HOME>/logs/` 与 `%APPDATA%\@deepseek-ai\dsh-desktop\logs`
 

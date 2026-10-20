@@ -131,7 +131,10 @@ test('H2 装配：shareDir 为空时按钮必须禁用（不给用户点了才�
 test('M1 装配：CLI --doctor 必须调用 envChecks（不能只有 doctorChecks）', () => {
   const src = read('bin/dsh-remote-setup.js')
   assert.match(src, /envChecks/, 'CLI 应调用 envChecks（补上可达性/loopback 诊断）')
-  assert.match(src, /isLoopbackOrigin/, 'CLI 应判定 loopback')
+  // ⚠ 判据必须是 listen-server 的那一份（v0.9.3 审查 L2/H5）：
+  // 0.9.3 起端点由插件自己的独立监听承载，CLI 再自己拼 origin 字符串去判
+  // loopback 就是第二份实现 —— 两套判据分叉正是 C2 的成因。
+  assert.match(src, /isLoopbackHost/, 'CLI 应复用 listen-server 的 loopback 判据')
   // 两段都要跑（CLI 独有项 + 运行时态项）
   assert.match(src, /doctorChecks\(/, 'CLI 仍应保留 doctorChecks 的静态校验')
 })

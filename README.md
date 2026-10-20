@@ -30,12 +30,12 @@
 
 | | |
 |---|---|
-| **状态** | 0.9.0 —— 主机 + 副机端到端可用；`exec` 与 `agent` 双链路均已在两台真机上验证通过；CI 覆盖 Windows / macOS / Linux |
+| **状态** | 0.9.3 —— 主机 + 副机端到端可用；`exec` 与 `agent` 双链路均已在两台真机上验证通过；CI 覆盖 Windows / macOS / Linux |
 | **DSH** | 桌面版 / CLI，0.2.0-rc.2 验证 |
 | **平台** | Windows（全量验证）· Linux / macOS（CI 覆盖）|
 | **依赖** | **零外部 npm 依赖** —— 只用 `node:` 内置模块 |
 | **Node** | `^22.19.0 \|\| >=24.0.0` |
-| **测试** | 938 项（937 pass / 1 skip）· 118 条文档漂移断言 · eslint 严格档 |
+| **测试** | 982 项（980 pass / 2 skip）· 123 条文档漂移断言 · eslint 严格档 |
 
 **Web 面板**（侧栏「远程同事」）：节点列表（含 CPU/内存徽章）、派发任务、
 任务状态、结果摘要、工作区变更、成品清单、日志尾巴、**环境体检**、
@@ -44,11 +44,13 @@
 > **开箱即用**：装完重启 DSH 就能用。包内 patch 默认 `role: auto`（没配
 > `hubUrl` 就是主机），自动生效。
 >
-> **副机要能连上，主机的 `webserver` 必须绑一个具体的本机 IP**（DSH 默认只绑
-> `127.0.0.1`，那样副机永远连不上）。这一步需要你填一次 —— 打开面板时
-> 「环境体检」会检查并告诉你该填什么。
+> **副机连的是插件自己的端口，不用改 DSH 的任何配置。** 0.9.3 起本插件自己
+> 开一个独立监听（默认 **19387**），副机直接拨这个端口 —— **不再依赖
+> `webserver`**，也就不用去 `cordis.patch.yml` 里填 host。
 >
-> ⚠ **不能用 `0.0.0.0`**：新版 DSH 会硬拒绝通配地址，导致 DSH **启动崩溃**。
+> 绑哪个地址是自动选的：`listenHost`（如果你填了）> Tailscale IP >
+> 局域网 IP > 回环。想指定就配 `listenHost: '100.x.x.x'`；
+> **`0.0.0.0` 一律拒绝**（新版 DSH 硬拒通配地址，绑了会让 DSH 启动崩溃）。
 > 详见下方「安装」。
 
 <p align="center">
@@ -221,24 +223,30 @@ npm install -g dsh-remote-agent
 - 包内 patch 默认 `role: auto`。**没配 `hubUrl` 就是主机**，自动生效。
 - 打开 Web 面板「远程同事」，点「副机接入」生成配对码，发给副机。
 
-**唯一需要你填一次的是 `webserver` 的 host** —— 副机要能连上，主机必须绑一个
-**具体的本机 IP**（DSH 默认只绑 `127.0.0.1`，那样副机永远连不上，而且主机侧
-毫无异常）。在 profile 的 `cordis.patch.yml` 里：
+**不需要改 DSH 的 `webserver`。** 0.9.3 起插件自己监听一个端口（默认 19387），
+副机拨的是它，不是 DSH 的 Web 端口。历史上那套"去 patch 里给 webserver 填一个
+具体 host"的做法**已经作废** —— 它还有个副作用：DSH 每次启动都会重写 patch，
+填进去的 `webserver` 段会被删掉（实测 15 条配置剩 3 条）。
+
+**想指定绑哪个地址**（多数情况不用，自动选的就是对的）：
 
 ```yaml
-- id: webserver
+- id: remote-agent
   config:
-    host: '100.x.x.x'    # ← 换成你自己的地址
-    port: 19387
+    listenHost: '100.x.x.x'   # 可选：留空=自动（Tailscale > 局域网 > 回环）
+    listenPort: 19387         # 可选：默认 19387；填 0 = 关闭独立监听
 ```
+
+**自动选的顺序**是 `listenHost`（填了就用它）→ Tailscale IP（`100.64.0.0/10`）
+→ 局域网私网 IP → 任意非回环 → `127.0.0.1`。
 
 **怎么查自己的地址**：
 
 - 跨网（推荐）：`tailscale ip -4` —— Tailscale IP 固定不变、跨网可达
 - 同一局域网：`ipconfig` 看 WLAN/以太网那块网卡的 IPv4
 
-> ⚠ **绝对不能写 `0.0.0.0`**。新版 `@deepseek-ai/dsh-host-webserver` 在 schema
-> 校验阶段就会硬拒绝通配地址：
+> ⚠ **`listenHost` 不能写 `0.0.0.0`**（`::` 也不行）。新版
+> `@deepseek-ai/dsh-host-webserver` 在 schema 校验阶段就硬拒绝通配地址：
 >
 > ```
 > host "0.0.0.0" is an unspecified (wildcard) address, which is not supported:
@@ -246,11 +254,16 @@ npm install -g dsh-remote-agent
 > bind one concrete IPv4 or IPv6 address of a local interface instead
 > ```
 >
-> 后果是 **DSH 启动崩溃**（`webserver` 是 required 插件，它挂了 `webServer`
-> 服务就缺失，至少 6 个插件排队等它，包括本插件）。
+> 本插件自己开端口，同样**主动拒绝**通配地址：填了会退回自动选择，而不是
+> 把端点暴露到所有网卡。
 >
-> 面板的「环境体检」会自动检测这一项，绑错了会明确告诉你当前绑在哪、
-> 该改成什么 —— 面板加载时也会自动体检一次。
+> 面板的「环境体检」会检查独立监听有没有起来、绑在哪、副机能不能拨进来；
+> 连不上时按提示修（每条 ✗ 都带具体怎么做）。
+
+> **安全策略：`nodeToken` 为空时不暴露到网络。** 没有入网口令的开放在公网/
+> 局域网里等于把 RCE 送人。这种情况下插件只绑 `127.0.0.1`（本机 both 模式
+> 仍可用），面板会显示一条**黄色**提示告诉你去点「生成口令」。生成后重启
+> DSH 即恢复可达地址 —— 想强行对外就显式填一个非回环的 `listenHost`。
 
 ### 副机（worker）—— 贴个配对码就行
 
