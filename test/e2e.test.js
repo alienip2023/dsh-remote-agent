@@ -64,6 +64,62 @@ test('generateEphemeral：43 字符 base64url 公钥，两次生成互不相同'
   assert.equal(Buffer.from(a.publicKeyB64, 'base64url').length, 32)
 })
 
+test('私钥重建走 DER，不依赖 JWK 的 x 校验（2026-10-20 CI 回归）', () => {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 原实现用 JWK 重建私钥：`{ kty:'OKP', crv:'X25519', d: b64, x: '' }`
+  //
+  // 本地 Node 24.18 能过，但 GitHub Actions 的 ubuntu-latest / node 24.x 抛
+  // `ERR_CRYPTO_INVALID_JWK`（x 空串不是合法 base64url；省略 x 同样被拒）。
+  //
+  // 后果很隐蔽：E2E 握手失败 → 测试只看到
+  // `timeout waiting for e2e session on test-worker`，**真因被完全掩盖**。
+  //
+  // 现在改用 DER（固定 16 字节 PKCS#8 前缀 + 32 字节标量），不经过 JWK 校验。
+  // ═══════════════════════════════════════════════════════════════════════════
+  const node = generateEphemeral()
+  const hub = generateEphemeral()
+
+  // 双方各自用「本方私钥 + 对方公钥」派生会话密钥。
+  // salt 由双方的**长期**公钥组成（nodePubB64 / hubPubB64），这里用临时公钥
+  // 代替即可 —— 本用例验证的是"私钥重建路径能跑通且双方结果一致"。
+  const ka = deriveSessionKey({
+    role: 'node',
+    ownPrivB64: node.privateKeyB64,
+    peerPubB64: hub.publicKeyB64,
+    nodePubB64: node.publicKeyB64,
+    hubPubB64: hub.publicKeyB64,
+  })
+  const kb = deriveSessionKey({
+    role: 'hub',
+    ownPrivB64: hub.privateKeyB64,
+    peerPubB64: node.publicKeyB64,
+    nodePubB64: node.publicKeyB64,
+    hubPubB64: hub.publicKeyB64,
+  })
+
+  assert.ok(ka && Buffer.isBuffer(ka.key), '应返回 { key, dir }')
+  assert.equal(ka.key.length, 32, 'AES-256 需要 32 字节密钥')
+  // 两侧派生结果必须一致（role 只影响 send/recv 方向标签，不影响密钥材料）
+  assert.deepEqual(ka.key, kb.key, '双方派生的会话密钥必须一致（不一致 = 握手必失败）')
+  // 方向标签必须相反
+  assert.notDeepEqual(ka.dir, kb.dir, '两端 send/recv 方向必须互补')
+})
+
+test('私钥重建：非法长度必须明确抛错（不静默失败）', () => {
+  // 32 字节以外的输入应立刻报错，而不是产生一个"看起来能用"的密钥
+  const peer = generateEphemeral()
+  assert.throws(
+    () => deriveSessionKey({
+      role: 'node',
+      ownPrivB64: 'short',
+      peerPubB64: peer.publicKeyB64,
+      nodePubB64: peer.publicKeyB64,
+      hubPubB64: peer.publicKeyB64,
+    }),
+    /bad x25519 private key length|Invalid|length/i,
+  )
+})
+
 test('normalizeE2EPub：合法放行，长度/字符集/字节数不对一律空串', () => {
   assert.equal(normalizeE2EPub(GOLDEN.nodePub), GOLDEN.nodePub)
   assert.equal(normalizeE2EPub('short'), '')
