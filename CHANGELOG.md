@@ -9,6 +9,86 @@
 
 ---
 
+## [0.9.5] - 2026-10-20
+
+> **紧急修复：0.9.4 装上后 DSH 报激活失败，插件显示"异常"。**
+>
+> ```
+> webserver: duplicate upgrade route "/api/remote-agent/node"
+> 1 entry did not activate remote-agent (dsh-remote-agent)
+> ```
+>
+> 0.9.4 在**全新启动**的场景是好的（我验证过单次 apply 注册一次），
+> 但**热重载会撞车** —— 而 DSH 在插件安装/升级后正是靠热重载生效的。
+
+### 🔴 根因：我们的注册不可回收，而宿主不会帮我们回收
+
+`webServer.registerUpgrade(path)` 在 DSH 里是**按 path 查表**的，同路径第二次
+注册直接抛（组合级契约，它这么做是对的）：
+
+```js
+registerUpgrade(route) {
+  if (this.upgrades.has(route.path)) throw new Error(`webserver: duplicate upgrade route "${route.path}"`)
+  this.upgrades.set(route.path, route)
+  return () => { this.upgrades.delete(route.path) }
+}
+```
+
+而本插件的注册全部收集在 `__disposers` 里，通过 `applyHub()` 的返回值
+（`disposeAll`）交给调用方保管 —— **但 DSH 不认识这个返回值**。热重载时它只
+重新 `apply`，不会回头调我们的 disposer。于是第二代的注册压在第一代的残留上：
+
+```
+第一代 apply → 注册 /api/remote-agent/node（表里有了）
+DSH 热重载 → 直接再 apply（不 dispose）
+第二代 apply → registerUpgrade(同一 path) → throw → 整个 entry 激活失败
+```
+
+0.9.3 及以前没暴露，是因为那时改完配置都靠"重启 DSH"（进程重来，表是新的）；
+0.9.4 是在插件管理页里安装/升级，走了热重载路径 —— 这是**场景差异，不是新引入的代码**。
+
+### 修复
+
+1. **apply 变成可重入**（`lib/index.js`）：按**注册宿主**（`ctx.webServer` 服务
+   实例，读不到时退回 ctx）记住"当前这一代"的 dispose；重新 apply 时先自己把
+   上一代摘干净再装。**不指望宿主帮我们清理** —— 这是唯一在各种宿主行为下都
+   成立的修法。
+2. **`disposeAll` 改成逆序**（`lib/hub/index.js`）：此前是正序跑的，会先拆运行时
+   （`registry.dispose()`）再拆工具，工具的 disposer 可能碰到已销毁的 registry。
+   现在与 cordis 的"逆序释放"语义一致。
+3. **独立监听加了 EADDRINUSE 有限重试**：重入时先 `close()` 旧监听、立刻用同一
+   端口重新 `listen`，在 Windows 上经常还拿不到端口（close 是异步的）。重试
+   4 次（200/400/600ms 退避），真被别的进程占用仍会如实报错。
+4. **`handles.dispose`**：apply 的返回值现在带一个顶层 `dispose()`，任何愿意调
+   它的宿主都能正确清理。
+
+### 为什么 CI 没拦住（第三次同类）
+
+仓库里所有测试桩都**比宿主宽松**：`hub-worker-e2e.test.js` 的 `makeCtx()` 里
+`register()` 是 `table.set()`（同名静默覆盖）、`registerUpgrade()` 只是再挂一个
+`server.on('upgrade')`。真宿主会抛，桩不会 —— **桩比宿主宽松 = 假绿灯**。
+
+新增 `test/webserver-contract.test.js`：照宿主源码造一个**重复即抛**的严格 ctx，
+钉住四条契约：
+
+- 单次 apply 只注册一条 upgrade 路由
+- **同一 ctx 重复 apply 不抛**（就是本次的事故回归）
+- apply → dispose → apply 可反复进行，且旧世代的 dispose 不得影响新世代
+- 重入后**独立监听仍能绑回同一端口**（热重载不能把端点变成永久不可用）
+
+### 升级须知
+
+- 装完请在插件页把开关**关一次再打开**（或重启 DSH），让热重载重新加载新代码。
+- 如果你之前点了「生成口令」，副机要用新口令重新配对。
+
+```
+packaging   4 项
+doc-drift   123/123
+diag:inject 11 项
+tests       987（985 pass / 0 fail / 2 skip）
+lint        干净
+```
+
 ## [0.9.4] - 2026-10-20
 
 > **0.9.3 审查的 19 项全部修完。** 0.9.3 把架构换对了（插件自己开 19387），

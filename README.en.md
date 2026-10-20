@@ -37,7 +37,7 @@ explicitly pull them.
 | **Platforms** | Windows (fully verified) · Linux / macOS (CI covered) |
 | **Dependencies** | **Zero external npm dependencies** —— `node:` built-ins only |
 | **Node** | `^22.19.0 \|\| >=24.0.0` |
-| **Tests** | 982 (980 pass / 2 skip) · 123 doc-drift assertions · eslint strict |
+| **Tests** | 987 (985 pass / 2 skip) · 123 doc-drift assertions · eslint strict |
 
 **Web panel**（sidebar → "远程同事" / Remote co-worker）：node list with CPU /
 memory badges, task dispatch, task states, result summaries, workspace changes,
