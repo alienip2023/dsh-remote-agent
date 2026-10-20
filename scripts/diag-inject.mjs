@@ -185,14 +185,14 @@ try {
 }
 
 if (applyHub) {
-  // 4a. inject 齐全 → 不抛，且 12 个工具都在（8 任务 + 4 文件，提案 #25）
+  // 4a. inject 齐全 → 不抛，且 19 个工具都在（8 任务 + 4 只读 + 4 写操作 + 3 进程）
   try {
     const ctx = fakeCtx(declared)
     applyHub(ctx, { role: 'hub', nodeToken: 'nt_diag' })
     check('inject 齐全时 applyHub 不抛', true)
     check(
       'inject 齐全时注册 12 个 remote_* 工具',
-      ctx.registered.tools.length === 12,
+      ctx.registered.tools.length === 19,
       `实际 ${ctx.registered.tools.length} 个：${ctx.registered.tools.join(', ') || '(无)'}`,
     )
     check('inject 齐全时注册了路由', ctx.registered.routes.length > 0, `${ctx.registered.routes.length} 条`)

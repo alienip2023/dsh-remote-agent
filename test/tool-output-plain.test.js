@@ -138,34 +138,45 @@ test('收口：reg() 必须给每个工具包上净化层', () => {
   assert.match(regBody, /toPlainJson\(/, 'reg 必须把 execute 的返回值过一遍 toPlainJson')
 })
 
-test('收口：toPlainJson 必须覆盖全部 12 个工具（经 reg 注册）', () => {
+test('收口：toPlainJson 必须覆盖全部 19 个工具（经 reg 注册）', () => {
   const src = fs.readFileSync(TOOLS, 'utf8')
-  // 8 个任务工具直接 reg({ name: 'remote_x' })；4 个文件工具（提案 #25）经
-  // fsOp(name, ...) 包装，name 以第一实参出现 —— 两种形态都要数进来。
+  // 工具名以三种形态出现，全部要数进来（否则新增工具时这条断言会静默漏掉）：
+  //   1. 8 个任务工具：`reg({ name: 'remote_x', ... })` —— 出现 `name: '...'`
+  //   2. 4 个只读文件工具：`fsOp('remote_x', ...)` —— 第一实参独立一行、4 空格缩进
+  //   3. 4 个写操作工具（2026-10-20）：`writeOp('remote_x', ...)` —— 同样形态
   const direct = [...src.matchAll(/name: '(remote_[a-z_]+)'/g)].map((m) => m[1])
-  const viaFsOp = [...src.matchAll(/\n {4}'(remote_[a-z_]+)',\n/g)].map((m) => m[1])
-  const names = [...direct, ...viaFsOp]
-  assert.equal(names.length, 12, `应有 12 个工具，实际 ${names.length}: ${names.join(', ')}`)
-  // 直接 reg({...}) 的 8 个；fsOp 内部那处 reg({ 缩进 4 空格，不在此列
+  const viaHelper = [...src.matchAll(/\n {4}'(remote_[a-z_]+)',\n/g)].map((m) => m[1])
+  const names = [...direct, ...viaHelper]
+  assert.equal(names.length, 19, `应有 19 个工具，实际 ${names.length}: ${names.join(', ')}`)
+  // 直接 reg({...}) 的：8 个任务工具 + 3 个进程诊断工具 = 11 个
+  // （fsOp / writeOp 内部那处 reg({ 缩进 4 空格，不在此列）
   const regCalls = (src.match(/\n {2}reg\(\{/g) || []).length
-  assert.equal(regCalls, 8, `应有 8 处直接 reg({...}) 调用，实际 ${regCalls}`)
-  assert.match(src, /const fsOp = /, '文件工具应经 fsOp 包装注册（统一 fsRequest 错误转译）')
+  assert.equal(regCalls, 11, `应有 11 处直接 reg({...}) 调用（8 任务 + 3 进程），实际 ${regCalls}`)
+  assert.match(src, /const fsOp = /, '只读文件工具应经 fsOp 包装注册（统一 fsRequest 错误转译）')
+  assert.match(src, /const writeOp = /, '写操作工具应经 writeOp 包装注册（强制 confirm 二次确认）')
   // 锁住工具集合本身：新增/删除工具时这条会提醒你同步文档与断言
   assert.deepEqual(
     names.slice().sort(),
     [
       'remote_cancel',
+      'remote_delete',
       'remote_grep',
       'remote_handoff',
+      'remote_kill',
       'remote_ls',
       'remote_manifest',
+      'remote_mkdir',
+      'remote_move',
       'remote_nodes',
+      'remote_port',
+      'remote_ps',
       'remote_pull',
       'remote_purge',
       'remote_read',
       'remote_status',
       'remote_task',
       'remote_tree',
+      'remote_write',
     ],
     '工具集合变了 —— 记得同步 README、check-doc-drift 与这里的断言',
   )

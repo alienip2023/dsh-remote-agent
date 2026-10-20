@@ -101,8 +101,11 @@ test('安全：POST /share 缺 confirm 必须 400（不能有默认通过）', (
 
 test('安全：二次确认的文案必须说明"会绕过边界"', () => {
   const code = read('lib/hub/ui-routes.js')
-  const i = code.indexOf('confirm-required')
-  const seg = code.slice(Math.max(0, i - 400), i + 400)
+  // ⚠ 不能只 indexOf('confirm-required') —— 2026-10-20 加了一键修复路由后，
+  // 它也用同一个错误码，第一处已经不再是 SMB 那条。锚 SMB 独有的上下文。
+  const anchor = code.indexOf('开启工作区共享会让主机绕过')
+  assert.ok(anchor >= 0, '应找到 SMB 的二次确认文案')
+  const seg = code.slice(Math.max(0, anchor - 300), anchor + 400)
   assert.match(seg, /绕过/, '说明里必须写"绕过"边界')
   assert.match(seg, /roots/, '说明里必须点名 roots 失效')
 })

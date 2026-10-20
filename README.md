@@ -16,7 +16,7 @@
 ┌─────────────── 主电脑（hub）────────────────┐
 │  DSH · 模型 · 会话日志 · 全部凭证            │
 │  ┌─ dsh-remote-agent ─────────────────────┐ │
-│  │ 12 个 remote_* 工具 + Web 面板          │ │
+│  │ 19 个 remote_* 工具 + Web 面板          │ │
 │  └────────────────────────────────────────┘ │
 └──────────────────▲──────────────────────────┘
                    │ 节点主动拨入（direct / relay）
@@ -177,7 +177,7 @@ node bin/dsh-remote-setup.js --doctor 你的配置.yml
 | **凭证不离开副机** | 协议里不带任何模型 key；副机用自己的模型配置跑自己的循环 |
 | **零 npm 依赖** | 只用 `node:` 内置模块，无构建步骤，`lib/` 就是产物 |
 
-### 工具速查（共 12 个）
+### 工具速查（共 19 个）
 
 | 类别 | 工具 |
 |---|---|
@@ -185,7 +185,9 @@ node bin/dsh-remote-setup.js --doctor 你的配置.yml
 | **任务** | `remote_task`（派发）· `remote_status`（查进度）· `remote_cancel`（取消）|
 | **审批** | `remote_task` 的 `approval: 'manual'` 会挂起 → 面板或工具批准/拒绝 |
 | **结果** | `remote_handoff`（结果卡）· `remote_manifest`（产物清单）· `remote_pull`（拉成品）· `remote_purge`（清理）|
-| **文件** | `remote_ls` · `remote_read` · `remote_grep` · `remote_tree` |
+| **文件（只读）** | `remote_ls` · `remote_read` · `remote_grep` · `remote_tree` |
+| **文件（写入）** | `remote_write` · `remote_mkdir` · `remote_move` · `remote_delete` —— **必须传 `confirm: "yes"`**；默认不覆盖、不递归删 |
+| **诊断** | `remote_ps`（列进程）· `remote_port`（查端口占用）· `remote_kill`（杀进程，**不可逆**，须 `confirm: "yes"`）|
 
 ---
 
@@ -442,7 +444,7 @@ ack 自动按明文兼容旧中继继续），安全边界与已知局限见
 | 路径 | 作用 |
 |---|---|
 | `lib/index.js` | 插件入口（角色分发器：`role: auto` / `hub` / `worker` / `both`） |
-| `lib/hub/**` | 主机侧：节点注册表、**12 个工具**、subagent provider、UI 路由、环境体检 |
+| `lib/hub/**` | 主机侧：节点注册表、**19 个工具**、subagent provider、UI 路由、环境体检 |
 | `lib/hub/views.js` | **投影共享层** —— 工具与 UI 用同一份字段白名单 |
 | `lib/node/**` | 副机侧：拨入、任务引擎、产物服务、exec/agent 双后端、SMB 共享 |
 | `lib/env-check.js` | 环境体检（命令行与面板共用一份逻辑） |

@@ -1068,10 +1068,14 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
   const toolsSrc = read('lib/hub/tools.js')
   const rootReadme2 = read('README.md')
 
-  // 数实际注册：`reg(` 与 `fsOp(` 的调用点（都是工具注册入口）
+  // 数实际注册：三种注册入口都要算进来（2026-10-20 加了 writeOp 与进程工具）
+  //   · `reg(`      —— 任务工具 + 进程诊断工具
+  //   · `fsOp(`     —— 只读文件工具
+  //   · `writeOp(`  —— 写操作文件工具
   const regCount = (toolsSrc.match(/^\s{2}reg\(/gm) || []).length
   const fsOpCount = (toolsSrc.match(/^\s{2}fsOp\(/gm) || []).length
-  const actual = regCount + fsOpCount
+  const writeOpCount = (toolsSrc.match(/^\s{2}writeOp\(/gm) || []).length
+  const actual = regCount + fsOpCount + writeOpCount
 
   // 从 README 里抽声明（形如「12 个 remote_* 工具」或「工具速查（共 12 个）」）
   const m = /(?:共\s*(\d+)\s*个|(\d+)\s*个\s*remote_\*)/.exec(rootReadme2)
@@ -1079,7 +1083,7 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
 
   check('83', 'README 声明的工具数量等于代码里实际注册的数量',
     declared !== null && declared === actual,
-    `lib/hub/tools.js（实际 ${actual} 个：reg=${regCount} + fsOp=${fsOpCount}）`
+    `lib/hub/tools.js（实际 ${actual} 个：reg=${regCount} + fsOp=${fsOpCount} + writeOp=${writeOpCount}）`
     + ` vs README.md（声明 ${declared === null ? '未找到' : declared} 个）`)
 }
 
@@ -1241,6 +1245,96 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     && /progressLine/.test(clientSrc6)
     && /最近：/.test(clientSrc6),
     'lib/client.js（复制按钮 + 编号步骤 + 角色提示 + 任务进度摘要）')
+}
+
+/* ── 91~94. 四项新能力（2026-10-20）──
+ *
+ * 用户要求"一键修复 / 自动装依赖 / 更多工具 / 重写 UI"。
+ * 每一项都在**放宽边界**，所以断言的重点不是"能用"，而是**护栏在不在**：
+ *
+ *   · 一键修复  → 会改 DSH 自己的 cordis.patch.yml
+ *   · 写操作    → 会改副机的文件（不可逆）
+ *   · kill      → 会杀副机的进程（杀错会失联）
+ *   · 外部工具  → "自动装依赖"的诱惑要顶住（只给命令，不代下载）
+ */
+{
+  const autoFixSrc = read('lib/auto-fix.js')
+  const extSrc = read('lib/external-tools.js')
+  const fsSrc = read('lib/node/fs-service.js')
+  const procSrc = read('lib/node/process-service.js')
+  const toolsSrc2 = read('lib/hub/tools.js')
+  const clientSrc7 = read('lib/client.js')
+  const uiSrc6 = read('lib/hub/ui-routes.js')
+
+  check('91', '一键修复：只改托管块 + 备份 + 写后校验 + 二次确认 + 可撤销',
+    // 只读预览与写盘分离
+    /export function planFixes/.test(autoFixSrc)
+    && /export function applyFixPlan/.test(autoFixSrc)
+    // 写盘复用带备份的 writePatchBlock
+    && /writePatchBlock/.test(uiSrc6)
+    // 写后校验：重复 id / 条目缺失
+    && /重复 id/.test(autoFixSrc)
+    // 撤销
+    && /export function undoFix/.test(autoFixSrc)
+    // 路由层强制 confirm
+    && /confirm !== 'yes'/.test(uiSrc6)
+    // 绝不给 0.0.0.0（会让 DSH 崩溃）
+    && /h !== '0\.0\.0\.0'/.test(read('lib/listen-server.js')),
+    'lib/auto-fix.js + lib/hub/ui-routes.js（plan/apply/undo + confirm 硬要求）')
+
+  check('92', '写操作：roots 护栏 + 默认不覆盖 + 不递归删 + 原子写',
+    // 写操作专用解析（允许目标不存在）
+    /function resolveWritable/.test(fsSrc)
+    // 默认不覆盖
+    && /overwrite !== true/.test(fsSrc)
+    // 不递归删：非空目录必须拒绝
+    && /directory not empty/.test(fsSrc)
+    // 原子写
+    && /dshra-tmp/.test(fsSrc)
+    // 单次写入上限
+    && /WRITE_MAX_BYTES/.test(fsSrc)
+    // hub 侧强制 confirm
+    && /const writeOp = /.test(toolsSrc2)
+    && /args\?\.confirm !== 'yes'/.test(toolsSrc2),
+    'lib/node/fs-service.js（resolveWritable + 不覆盖 + 不递归删）+ tools.js（confirm）')
+
+  check('93', '进程诊断：kill 三道护栏（confirm / 拒杀自身与父进程 / 拒杀系统进程）',
+    /export function killProcess/.test(procSrc)
+    // 约束 1：confirm
+    && /confirm !== 'yes'/.test(procSrc)
+    // 约束 2：拒杀自己与父进程
+    && /n === selfPid/.test(procSrc)
+    && /n === parentPid/.test(procSrc)
+    // 约束 3：系统关键进程
+    && /PROTECTED_PROCESS_NAMES/.test(procSrc)
+    // 命令注入面：PID/端口必须归一化
+    && /export function normalizePid/.test(procSrc)
+    && /export function normalizePort/.test(procSrc),
+    'lib/node/process-service.js（kill 三道护栏 + pid/port 归一化）')
+
+  check('94', '外部工具：只检测 + 给命令，绝不代下载（守供应链边界）',
+    /export function probeExternalTools/.test(extSrc)
+    && /export function toolCatalog/.test(extSrc)
+    // 每个工具都要说明"缺了会怎样"
+    && /why:/.test(extSrc)
+    // 给安装命令与官方链接，但不执行
+    && /install:/.test(extSrc)
+    && /url:/.test(extSrc)
+    // 反例：不得出现代执行安装命令的调用
+    && !/spawnSync\(\s*['"`](winget|brew|apt|choco|curl|wget)/.test(extSrc),
+    'lib/external-tools.js（探测 + 说明 + 命令，不执行）')
+
+  check('95', 'UI：折叠区块（信息密度）—— 首屏只留当下需要的',
+    // 原生 details（零 JS 状态）
+    /className: 'dra-fold'/.test(clientSrc7)
+    && /<details|h\('details'/.test(clientSrc7)
+    // 折叠样式
+    && /\.dra-fold/.test(clientSrc7)
+    // 默认展开策略：没节点时展开接入
+    && /open: state\.nodes\.length === 0/.test(clientSrc7)
+    // 体检有失败项时默认展开
+    && /open: Boolean\(envCheck && envCheck\.failed > 0\)/.test(clientSrc7),
+    'lib/client.js（Fold 组件 + dra-fold 样式 + 默认展开策略）')
 }
 
 /* ── 输出 ── */

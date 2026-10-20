@@ -63,7 +63,7 @@ function declaredInject() {
 /* ─────────────── 1. 包内 inject 必须覆盖 hub 的三个服务 ─────────────── */
 
 test('包内 inject 必须含 hub 需要的三个服务（webServer/tools/systemPrompt）', () => {
-  // applyHub 会访问这三个（webServer 注册路由、tools 注册 12 个工具、
+  // applyHub 会访问这三个（webServer 注册路由、tools 注册 19 个工具、
   // systemPrompt 挂提示词段）。少任何一个，hub 分支就抛。
   const declared = declaredInject()
   assert.ok(declared !== '', 'cordis.patch.yml 应有生效的 inject 声明')
@@ -176,8 +176,8 @@ test('回归：applyHub 在缺 tools 的 inject 下**不再抛错**（容错生�
   assert.equal(ctxA.registered.tools.length, 0, '缺 tools 时应没有工具')
   assert.ok(ctxA.registered.routes.length > 0, '缺 tools 时路由仍应注册')
 
-  // 齐全：应该有 12 个工具（8 任务 + 4 文件，提案 #25）
+  // 齐全：应该有 19 个工具（8 任务 + 4 只读文件 + 4 写操作 + 3 进程诊断，2026-10-20）
   const ctxB = makeCtx(['webServer', 'tools', 'systemPrompt'])
   applyHub(ctxB, { role: 'hub', nodeToken: 'nt_x' })
-  assert.equal(ctxB.registered.tools.length, 12, 'inject 齐全时应有 12 个工具')
+  assert.equal(ctxB.registered.tools.length, 19, 'inject 齐全时应有 19 个工具（8 任务 + 4 只读 + 4 写操作 + 3 进程诊断）')
 })
