@@ -9,40 +9,30 @@
 
 ---
 
-## [0.9.3] - 2026-10-20
+## [0.9.4] - 2026-10-20
 
-> **架构级修复：插件自己开端口，副机拨入不再依赖 DSH 的 `webserver`。**
+> **0.9.3 审查的 19 项全部修完。** 0.9.3 把架构换对了（插件自己开 19387），
+> 但落地时几乎每一项都只改了"多条路径中的一条" —— 每个新机制都带着一个
+> 旧假设。本版逐条补齐。
 >
-> ⚠ **0.9.2 那段"去 patch 里给 `webserver` 填一个具体 host"的做法从本版起
-> 作废** —— 不用填了，填了也会被 DSH 每次启动重写掉。详见下节。
+> **0.9.3 有两个 Critical，请直接升级到 0.9.4**：
+> 配对码端口取的是 DSH webserver 的端口（复制的码 100% 连不上）；
+> `nodeToken` 为空时独立监听成了 tailnet 内的无鉴权接入点。
 >
-> ⚠ 0.9.3 首版（tag `349c8c5`）**CI 是红的**（win + ubuntu 全红、本地实测
-> 20 fail）却照样发了 npm。本条目记录的就是修复这批问题后的定版。
+> 架构（独立监听 / 配置分层 / 绑址优先链）见 0.9.3 条目，本版不改它。
 
-### 为什么必须换架构（三个死结，均实证）
+### 本版修掉的 19 个问题（0.9.3 审查）
 
-| 死结 | 现象 |
-|---|---|
-| **patch 被重写** | DSH 每次启动都重写 `cordis.patch.yml`，实测 3962B / 15 条 → **661B / 3 条**，写进去的 `webserver` 段被删光 |
-| **webServer 无 rebind** | `webServer` 服务激活即 `listen`，没有改绑方法，插件拿不到控制权 |
-| **硬拒通配地址** | 新版 `dsh-host-webserver` 在 schema 阶段就拒绝 `0.0.0.0`，绑了就 **DSH 启动崩溃**（已产生 10 份 crash 日志） |
+**Critical**
 
-结论：**副机端点不能再挂在 `ctx.webServer` 上。**
-
-### 新方案
-
-- **`lib/listen-server.js`** —— 用 `node:http` 自己开一个只服务节点端点的小
-  server：`GET <healthPath>` 回 200 JSON，`Upgrade: websocket` 复用 `ws.js`
-  的 `acceptUpgrade`，**路径精确匹配**，其它一律 404；关闭时追踪并断开所有连接。
-- **绑址优先链**：`listenHost` > Tailscale IP（`100.64.0.0/10`）> RFC1918 私网
-  > 任意非回环 > `127.0.0.1`；**拒绝** `0.0.0.0` / `::` / `[::]`。
-  默认端口 **19387**，`listenPort: 0` = 关闭独立监听。
-- **`lib/instance-config.js`** —— 配置分层：patch 只负责"让 loader 加载插件"，
-  真配置存 `<stateDir>/instance.json`（**0600 + 原子写 + 字段白名单**）。
-  `mergeInstanceConfig` 合并时**独立配置优先**，`apply()` 里重新归一化。
-- **安全边界**：token 校验仍是同一份逻辑，独立监听不降低门槛。
-
-### 本版修掉的 19 个问题（0.9.3 首版审查）
+- **C1 配对码端口是错的** —— 前端把浏览器地址栏端口（DSH webserver 的
+  58626 之类）拼进配对码，而节点端点在 19387 → **复制的码 100% 连不上**。
+  现在 `/pair-info` 从 `listenRuntime` 取**实际绑定端口**，响应带 `portSource`
+  （`listen-server` / `fallback`），每个候选地址标 `usable`，可用项排最前。
+- **C2 配对码的地址顺序与绑定顺序相反** —— `detectLanIps()` 自己实现了一套
+  分类（私网优先），而 `resolveListenHost()` 是 Tailscale 优先 → 首选地址
+  根本不是监听地址。现在 `detectLanIps()` 复用 `listCandidateAddresses()`，
+  判据只有一份。
 
 **High**
 
@@ -121,6 +111,51 @@ lint        干净（eslint 严格档，含 bin/ 与 test/）
   自己重写掉）。
 - 想固定绑哪个地址：`listenHost: '100.x.x.x'`；端口冲突就换 `listenPort`。
 - 防火墙要放行的是 **`listenPort`（默认 19387）**，不再是 DSH 的 Web 端口。
+- **面板里点过一次「生成口令」的，副机要用新口令重新配对**（旧口令已换掉）。
+
+## [0.9.3] - 2026-10-18
+
+> **架构级重做：插件自己开端口，副机拨入不再依赖 DSH 的 `webserver`。**
+>
+> ⚠ **0.9.2 那段"去 patch 里给 `webserver` 填一个具体 host"的做法从本版起
+> 作废** —— 不用填了，填了也会被 DSH 每次启动重写掉。
+>
+> 🔴 **本版有两个 Critical，已被 0.9.4 修复，请不要停留在本版**：
+> 面板生成的配对码用了 DSH webserver 的端口（粘了连不上）；
+> `nodeToken` 为空时独立监听变成了 tailnet 内的无鉴权接入点。
+> 另外本版发布时 **CI 是红的**（win + ubuntu 全红、本地实测 20 fail）。
+
+### 为什么必须换架构（三个死结，均实证）
+
+| 死结 | 现象 |
+|---|---|
+| **patch 被重写** | DSH 每次启动都重写 `cordis.patch.yml`，实测 3962B / 15 条 → **661B / 3 条**，写进去的 `webserver` 段被删光 |
+| **webServer 无 rebind** | `webServer` 服务激活即 `listen`，没有改绑方法，插件拿不到控制权 |
+| **硬拒通配地址** | 新版 `dsh-host-webserver` 在 schema 阶段就拒绝 `0.0.0.0`，绑了就 **DSH 启动崩溃**（已产生 10 份 crash 日志） |
+
+结论：**副机端点不能再挂在 `ctx.webServer` 上。**
+
+### 新方案
+
+- **`lib/listen-server.js`** —— 用 `node:http` 自己开一个只服务节点端点的小
+  server：`GET <healthPath>` 回 200 JSON，`Upgrade: websocket` 复用 `ws.js`
+  的 `acceptUpgrade`，**路径精确匹配**，其它一律 404；关闭时追踪并断开所有连接。
+- **绑址优先链**：`listenHost` > Tailscale IP（`100.64.0.0/10`）> RFC1918 私网
+  > 任意非回环 > `127.0.0.1`；**拒绝** `0.0.0.0` / `::` / `[::]`。
+  默认端口 **19387**，`listenPort: 0` = 关闭独立监听。
+- **`lib/instance-config.js`** —— 配置分层：patch 只负责"让 loader 加载插件"，
+  真配置存 `<stateDir>/instance.json`（**0600 + 原子写 + 字段白名单**）。
+  `mergeInstanceConfig` 合并时**独立配置优先**，`apply()` 里重新归一化。
+- **安全边界**：token 校验仍是同一份逻辑，独立监听不降低门槛。
+  （`nodeToken` 为空的处理是本版**没做到位**的地方，见 0.9.4 的 H1。）
+
+```
+packaging   4 项
+doc-drift   121/121
+diag:inject 11 项
+tests       975（953 pass / 20 fail / 2 skip）   ← 发布时实际是红的
+lint        干净
+```
 
 ## [0.9.2] - 2026-10-18
 

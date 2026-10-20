@@ -30,7 +30,7 @@
 
 | | |
 |---|---|
-| **状态** | 0.9.3 —— 主机 + 副机端到端可用；`exec` 与 `agent` 双链路均已在两台真机上验证通过；CI 覆盖 Windows / macOS / Linux |
+| **状态** | 0.9.4 —— 主机 + 副机端到端可用；`exec` 与 `agent` 双链路均已在两台真机上验证通过；CI 覆盖 Windows / macOS / Linux |
 | **DSH** | 桌面版 / CLI，0.2.0-rc.2 验证 |
 | **平台** | Windows（全量验证）· Linux / macOS（CI 覆盖）|
 | **依赖** | **零外部 npm 依赖** —— 只用 `node:` 内置模块 |
