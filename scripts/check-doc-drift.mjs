@@ -1337,6 +1337,38 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     'lib/client.js（Fold 组件 + dra-fold 样式 + 默认展开策略）')
 }
 
+/* ── 96. README 必须介绍四项新能力（2026-10-20）──
+ *
+ * 起因：0.9.8 加了四项能力（一键修复 / 外部工具 / 写操作 / 进程诊断），
+ * 但 README 只更新了工具数量，**没有任何功能介绍** —— 用户反馈"readme 好像
+ * 没有功能相关的介绍"（这是第 2 次）。
+ *
+ * 断言做法：每个能力在 README 里必须有对应的小节标题。这样以后加功能忘了
+ * 写文档，这条会立刻失败。
+ */
+{
+  // ⚠ 变量名不能叫 readme —— 模块顶部已有 `const readme`（用于 read() 帮助），
+  // 同名会被 eslint 的 no-shadow 拦下。
+  const rootReadme3 = read('README.md')
+  const required = [
+    ['七、一键修复', '一键修复'],
+    ['八、外部工具检测', '外部工具检测'],
+    ['九、文件写入与进程诊断', '写操作 + 进程诊断'],
+  ]
+  const missing = required.filter(([heading]) => !rootReadme3.includes(heading)).map(([, name]) => name)
+
+  check('96', 'README 介绍了四项新能力（一键修复 / 外部工具 / 写操作 / 进程诊断）',
+    missing.length === 0
+    // 安全边界也必须写清楚（写操作与 kill 是主动放宽边界的能力）
+    && /主动放宽边界/.test(rootReadme3)
+    // 每项都要说明"为什么这么做"，而不只是"有什么功能"
+    && /为什么不代下载/.test(rootReadme3)
+    && /三道护栏/.test(rootReadme3),
+    missing.length === 0
+      ? 'README.md（七/八/九 三节 + 安全边界 + 设计理由）'
+      : `README.md 缺少小节：${missing.join('、')}`)
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {
