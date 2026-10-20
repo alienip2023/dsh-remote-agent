@@ -256,7 +256,7 @@ test('client 有 SetupView 组件且能写入', () => {
   assert.match(client, /function SetupView\(/, '应定义 SetupView')
   const code = stripComments(client)
   const i = code.indexOf('function SetupView(')
-  const seg = code.slice(i, i + 12000)
+  const seg = code.slice(i, i + 20000)
   // 三个选择都要有
   assert.ok(seg.includes('我是主机'), '应有「我是主机」')
   assert.ok(seg.includes('我是副机'), '应有「我是副机」')
@@ -271,7 +271,7 @@ test('client 有 SetupView 组件且能写入', () => {
 test('SetupView 会解析配对码（粘贴即填）', () => {
   const code = stripComments(client)
   const i = code.indexOf('function SetupView(')
-  const seg = code.slice(i, i + 12000)
+  const seg = code.slice(i, i + 20000)
   assert.match(seg, /dshra1:\\\/\\\//, '应识别 dshra1:// 前缀')
   assert.match(seg, /window\.atob\(/, '应 base64 解码')
   // 解析后要填进表单
@@ -281,7 +281,7 @@ test('SetupView 会解析配对码（粘贴即填）', () => {
 test('SetupView 的结果页提示"重启生效"', () => {
   const code = stripComments(client)
   const i = code.indexOf('function SetupView(')
-  const seg = code.slice(i, i + 12000)
+  const seg = code.slice(i, i + 20000)
   assert.match(seg, /重启 DSH/, '结果页必须提示重启 —— 配置改动不会热生效')
 })
 
@@ -293,7 +293,7 @@ test('提示（note/conflict）必须渲染在按钮**上方**', () => {
   // ═══════════════════════════════════════════════════════════════════════════
   const code = stripComments(client)
   const i = code.indexOf('function SetupView(')
-  const seg = code.slice(i, i + 15000)
+  const seg = code.slice(i, i + 20000)
 
   // worker 表单：「确认，写入配置」按钮
   const btnIdx = seg.indexOf("submit('worker')")
@@ -321,7 +321,7 @@ test('冲突提示在三处表单都提供（选择页 / 主机页 / 副机页�
   // 用户可能在任一步骤点提交，三处都必须能显示冲突 + 提供"替换"按钮。
   const code = stripComments(client)
   const i = code.indexOf('function SetupView(')
-  const seg = code.slice(i, i + 15000)
+  const seg = code.slice(i, i + 20000)
   const warns = (seg.match(/className: 'dra-warn'/g) || []).length
   assert.ok(warns >= 3, `冲突提示应出现在三处表单（实际 ${warns} 处）`)
   const forces = (seg.match(/force: true/g) || []).length

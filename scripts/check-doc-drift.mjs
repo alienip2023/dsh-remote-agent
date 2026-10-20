@@ -1177,6 +1177,72 @@ check('65', 'eslint 严格档：lint script + 配置文件 + CI job 三件套齐
     'lib/listen-server.js（拒 0.0.0.0 + Tailscale 优先）+ hub/index.js（测试环境跳过）')
 }
 
+/* ── 88~90. 用户体验五项（2026-10-20）──
+ *
+ * 实测用户反馈："出了问题不知道原因"。五个断层：
+ *   ① 副机连不上时主机只显示「0 在线」，没有原因
+ *   ② 体检能查出来，但修法要手抄 YAML
+ *   ③ 首次使用不知道从哪开始
+ *   ④ 原始错误（ECONNREFUSED / 401 / timeout after 40000ms）直接抛给用户
+ *   ⑤ 长任务只能看到"运行中"，不知道在干什么
+ *
+ * 这三条断言钉住"每条都有对应实现"，防止后续重构把它们悄悄拿掉。
+ */
+{
+  const explainSrc = read('lib/explain-error.js')
+  const regSrc = read('lib/hub/node-registry.js')
+  const clientSrc6 = read('lib/client.js')
+  const uiSrc5 = read('lib/hub/ui-routes.js')
+
+  check('88', '体验④：统一错误翻译层覆盖 errno + 协议码 + HTTP + 文案特征',
+    /export function explainError/.test(explainSrc)
+    // errno 分支
+    && /ECONNREFUSED/.test(explainSrc)
+    && /ETIMEDOUT/.test(explainSrc)
+    && /EADDRINUSE/.test(explainSrc)
+    // 协议码（用 ERROR_CODE 常量，不写死字符串）
+    && /ERROR_CODE\.UNAUTHORIZED/.test(explainSrc)
+    && /ERROR_CODE\.PROTOCOL_MISMATCH/.test(explainSrc)
+    // HTTP 状态
+    && /case 401:/.test(explainSrc)
+    && /case 404:/.test(explainSrc)
+    // 文案特征
+    && /handshake timeout/.test(explainSrc)
+    // 每条都有 hint（下一步做什么）
+    && /hint:/.test(explainSrc),
+    'lib/explain-error.js（errno + 17 个协议码 + HTTP + 文案特征，每条带 hint）')
+
+  check('89', '体验①：连接尝试历史（记录 + 面板空态诊断）',
+    // 注册表记录每次尝试
+    /noteConnectionAttempt/.test(regSrc)
+    && /connectionLog/.test(regSrc)
+    && /connectionReport/.test(regSrc)
+    // 拒绝点与成功点都要记
+    && /noteConnectionAttempt/.test(read('lib/hub/registry-handshake.js'))
+    // 路由透出
+    && /connection: connReport/.test(uiSrc5)
+    // 面板渲染诊断（区分"从没连过"与"连过又断"）
+    && /connDiag/.test(clientSrc6)
+    && /everConnected/.test(clientSrc6),
+    'node-registry.js + registry-handshake.js + ui-routes.js + client.js')
+
+  check('90', '体验②③⑤：复制修法按钮 + 编号步骤 + 任务进度摘要',
+    // ② 复制修法
+    /复制修法/.test(clientSrc6)
+    && /copyText\(it\.fix\)/.test(clientSrc6)
+    // ③ 编号步骤（hub 侧 1-4 步）
+    && /'重启 DSH'/.test(clientSrc6)
+    && /'生成配对码'/.test(clientSrc6)
+    && /'在副机上粘贴'/.test(clientSrc6)
+    && /'等它连上'/.test(clientSrc6)
+    // ③ 角色选择提示
+    && /你现在用的这台/.test(clientSrc6)
+    // ⑤ 任务行进度摘要
+    && /progressLine/.test(clientSrc6)
+    && /最近：/.test(clientSrc6),
+    'lib/client.js（复制按钮 + 编号步骤 + 角色提示 + 任务进度摘要）')
+}
+
 /* ── 输出 ── */
 const failed = results.filter((r) => !r.ok)
 if (process.argv.includes('--json')) {
