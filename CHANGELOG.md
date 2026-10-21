@@ -9,6 +9,79 @@
 
 ---
 
+## [0.9.11] - 2026-10-21
+
+### 🔴 修复：agent 任务"假成功"（真实使用中发现的严重 bug）
+
+**这是用户第一次真实派发任务时立刻暴露的问题。**
+
+现场（2026-10-21，用户实测）：
+
+```
+状态: completed          ← 显示成功
+结果摘要: [agent 错误] {"turn":1,"step":1,"error":{"message":
+         "DeepSeek Messages transport failed.","code":"TRANSPORT"}}
+成品: 0 项
+```
+
+**一次 agent 完全失败的任务被标记成 `completed`。**
+
+#### 根因
+
+DSH 的 `kick()` 是 `try { while (await this.turn()) } catch (_error) {}`
+—— **turn 内的错误被完全吞掉**，只通过 `agent/error` 事件暴露。
+
+我们**已经**监听了那个事件（之前修过一次"消息 source 类型非法"的 bug），
+但只做了一件事：把错误文案推进 `liveText`（所以它出现在摘要里）。
+`ok` 的判定是：
+
+```js
+ok: !timedOut && !aborted     // ← 完全没看这个错误
+```
+
+#### 为什么这比直接报错更糟
+
+报错至少知道要重试；**"假成功"会让人以为事情做完了** —— 用户可能就这样
+交付了一个什么都没生成的任务。
+
+#### 修法
+
+1. `agent/error` 里置 `hadError = true` + 记 `firstError`
+2. `ok` 必须包含 `&& !hadError`
+3. `stderr` 带上第一个错误 → engine 会把它写进 `task/end` 的 error 字段，
+   任务详情里就能看到原因（而不只是一句 completed）
+4. `exitCode` 在报错时为 1（不是 0）
+
+#### 测试
+
+`test/agent-false-success.test.js` **5 条**，用源码断言锁住这条链：
+
+- `agent/error` 必须置 `hadError`（不能只记文案）
+- `ok` 必须排除 `hadError`
+- 失败时 `exitCode` / `stderr` 必须反映错误
+- engine 的映射链完整（`result.ok ? COMPLETED : FAILED`）
+- `timedOut` / `aborted` 的原有语义没被破坏（#26-5 不回退）
+
+> **这个 bug 证明了什么**：61 个测试文件、1032 条断言全绿，但用户第一次
+> 真实使用就撞上了。因为所有测试都是 mock —— `agent/error` 的监听被
+> 静态断言"存在"，却没断言"它会影响 ok"。
+>
+> 静态断言能钉住"接线在"，钉不住"接线**对**"。
+
+### 顺带
+
+- `test/agent-cancel-abort.test.js` 里断言 `exitCode` 完整表达式的地方
+  放宽为"timedOut/aborted 优先落 null" —— 表达式加了 hadError 分支，
+  死锁整行文本会让每次正常演进都失败。
+
+```
+packaging   4 项
+doc-drift   132/132
+diag:inject 11 项
+tests       1037（1035 pass / 0 fail / 2 skip）
+lint        干净
+```
+
 ## [0.9.10] - 2026-10-20
 
 ### 文档：README 补齐四项能力的介绍

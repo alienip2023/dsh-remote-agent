@@ -111,9 +111,16 @@ test('#26-5：返回值 ok 必须排除 aborted（否则取消被落成 complete
 test('#26-5：返回值必须带 aborted 字段（engine 靠它映射 ABORTED）', () => {
   const i = body.indexOf('ok: !timedOut && !aborted')
   assert.ok(i >= 0)
-  const seg = body.slice(i, i + 400)
+  const seg = body.slice(i, i + 500)
   assert.match(seg, /aborted,/, '返回对象里必须有 aborted 字段')
-  assert.match(seg, /exitCode:\s*timedOut \|\| aborted \? null : 0/, '取消时 exitCode 应为 null')
+  // 取消/超时时 exitCode 必须是 null（不能是 0 —— 0 会被读成"正常退出"）。
+  // 2026-10-21：表达式加了 hadError 分支（agent 报错时 exitCode=1），
+  // 所以这里断言"timedOut/aborted 优先落 null"，而不是死锁整行文本。
+  assert.match(
+    seg,
+    /exitCode:\s*timedOut\s*\|\|\s*aborted\s*\?\s*null/,
+    '取消/超时时 exitCode 必须为 null',
+  )
 })
 
 /* ─────────────── 3. 超时与取消的语义不能混 ─────────────── */
