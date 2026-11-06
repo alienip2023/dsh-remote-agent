@@ -46,19 +46,20 @@ test('B: 7种徽章状态全部实现', () => {
   }
 })
 
-test('C: relay.url 为空时上桥被拦截，提示配置中继', () => {
+test('C: relay.url 为空时上桥被拦截，自动探测中继', () => {
   assert.ok(SRC.includes('curRelayUrl'), '应有 curRelayUrl 变量')
-  assert.ok(SRC.includes('请先在上方配置区填写并保存中继地址'), '应有缺中继提示文案')
+  assert.ok(SRC.includes('autoConfigRelayFromProbe'), '应有 autoConfigRelayFromProbe 自动探测中继函数')
 })
 
 test('C 变异验证：删除 relay check 后测试红', () => {
   assert.ok(SRC.includes('curRelayUrl.trim()'), '应检查 curRelayUrl.trim()')
-  assert.ok(SRC.includes("window.alert"), '应用 window.alert 提示用户')
+  assert.ok(SRC.includes('autoConfigRelayFromProbe'), '应有 autoConfigRelayFromProbe 调用')
   // 确保 relay check 在 runSshDeploy 函数内
   const deployIdx = SRC.indexOf('function runSshDeploy(')
   assert.ok(deployIdx >= 0)
-  const deployBlock = SRC.slice(deployIdx, deployIdx + 500)
+  const deployBlock = SRC.slice(deployIdx, deployIdx + 600)
   assert.ok(deployBlock.includes('curRelayUrl'), 'relay check 必须在 runSshDeploy 函数内')
+  assert.ok(deployBlock.includes('autoConfigRelayFromProbe'), 'auto-detect 必须在 runSshDeploy 函数内')
 })
 
 test('confirm 二次确认在 runInstallRuntime 内', () => {
