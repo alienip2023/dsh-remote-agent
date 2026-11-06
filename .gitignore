@@ -41,3 +41,4 @@ remote-artifacts/
 # 中继的一次性 token 文件：绝不提交
 tokens.json
 .relay-tokens/
+*.tgz
