@@ -42,23 +42,25 @@ test('B2（变异验证）：删掉 relay token 写入后断言红', () => {
   assert.ok(!mutant.includes('relayToken = str(body.hubToken)'), '变异后不含 relayToken 赋值')
 })
 
-/* ── Bug 3: ssh-onboard 从 config.relay?.token 读 token ───────────────── */
+/* ── Bug 3: ssh-onboard 与 /ui/config 走同一份 relay 读取口径 ─────────── */
 
-test('B3: ssh-onboard 优先读 config.relay?.token', () => {
+function assertOnboardReads(source) {
+  assert.ok(source.includes('readRelayToken(config)'), 'ssh-onboard 应走 readRelayToken(config)')
+  assert.ok(source.includes('readRelayUrl(config)'), 'ssh-onboard 应走 readRelayUrl(config)')
+}
+
+test('B3: ssh-onboard 走 readRelayToken / readRelayUrl', () => {
   const s = readFileSync(fileURLToPath(new URL('../lib/hub/ssh-onboard.js', import.meta.url)), 'utf-8')
-  assert.ok(s.includes('config.relay?.token'), 'ssh-onboard 应从 config.relay?.token 读')
-  assert.ok(s.includes('config.relay?.url'), 'ssh-onboard 应从 config.relay?.url 读')
+  assertOnboardReads(s)
 })
 
-test('B3（变异验证）：改回读 config.relayToken 后断言红', () => {
+test('B3（变异验证）：删掉 readRelayToken(config) 后断言红', () => {
   const s = readFileSync(fileURLToPath(new URL('../lib/hub/ssh-onboard.js', import.meta.url)), 'utf-8')
-  // Real code must prefer config.relay?.token over config.relayToken
-  const relayTokenLine = s.split('\n').find((l) => l.includes('relayToken') && l.includes('config.relay'))
-  assert.ok(relayTokenLine, '应找到 relayToken 配置读取行')
-  assert.ok(relayTokenLine.includes('config.relay?.token'), `应优先读 config.relay?.token，实际: ${relayTokenLine.trim()}`)
-  // Mutant: if someone changed it to only read config.relayToken
-  const mutant = s.replace('config.relay?.token', 'config.relayToken_nonexistent')
-  assert.ok(!mutant.includes('config.relay?.token'), '变异后不含 config.relay?.token — 说明 B3 测试能抓到')
+  const mutant = s.replace('readRelayToken(config)', 'readRelayToken_DELETED(config)')
+  assert.throws(
+    () => assertOnboardReads(mutant),
+    '变异后 B3 主断言必须失败',
+  )
 })
 
 /* ── ra18-3: hubUrl 显式非空 + hasRelay 时不走 auto-infer worker ──────── */
