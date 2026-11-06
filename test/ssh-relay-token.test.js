@@ -1,35 +1,76 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import assert from 'node:assert'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
-const SRC = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-const ONBOARD = readFileSync(new URL('../lib/hub/ssh-onboard.js', import.meta.url), 'utf8')
-const UI_ROUTES = readFileSync(new URL('../lib/hub/ui-routes.js', import.meta.url), 'utf8')
+const clientPath = fileURLToPath(new URL('../lib/client.js', import.meta.url))
+const onboardPath = fileURLToPath(new URL('../lib/hub/ssh-onboard.js', import.meta.url))
+const routesPath = fileURLToPath(new URL('../lib/hub/ui-routes.js', import.meta.url))
 
-// T1: probeHost returns relayHubToken
+const HUB_TOKEN_LINE = "if (parsed && typeof parsed.hubToken === 'string') relayHubToken = parsed.hubToken"
+const BODY_AUTO = 'body.autoHubToken'
+// comment L1447 + two uses on L1449
+const BODY_AUTO_COUNT = 3
+
+function sha256(buf) {
+  return createHash('sha256').update(buf).digest('hex')
+}
+
+function assertHubTokenAssignLine(source) {
+  assert.ok(source.includes(HUB_TOKEN_LINE), 'ssh-onboard.js 必须保留整行: ' + HUB_TOKEN_LINE)
+}
+
+function assertBodyAutoHubToken(source) {
+  const n = source.split(BODY_AUTO).length - 1
+  assert.ok(source.includes(BODY_AUTO), 'ui-routes.js 必须保留 body.autoHubToken')
+  assert.strictEqual(n, BODY_AUTO_COUNT, 'ui-routes.js 的 body.autoHubToken 必须仍在')
+}
+
+function withDiskMutation(filePath, mutate, predicate) {
+  const original = readFileSync(filePath)
+  const originalSha = sha256(original)
+  try {
+    writeFileSync(filePath, mutate(original.toString('utf8')))
+    const reread = readFileSync(filePath, 'utf8')
+    assert.throws(() => predicate(reread))
+  } finally {
+    writeFileSync(filePath, original)
+    const restored = readFileSync(filePath)
+    assert.strictEqual(sha256(restored), originalSha)
+  }
+}
+
+function mutateLine232(source) {
+  const nl = source.includes('\r\n') ? '\r\n' : '\n'
+  const lines = source.split(/\r?\n/)
+  lines[231] = '// MUTATION'
+  return lines.join(nl)
+}
+
+function mutateBodyAuto(source) {
+  return source.replaceAll(BODY_AUTO, 'body.DELETED')
+}
+
+const SRC = readFileSync(clientPath, 'utf8')
+const ONBOARD = readFileSync(onboardPath, 'utf8')
+
 test('T1: probeHost 返回 relayHubToken 字段', () => {
   assert.ok(ONBOARD.includes('relayHubToken'), 'ssh-onboard.js 必须包含 relayHubToken')
 })
 
-// T2: sftpReadFile helper exists
 test('T2: sftpReadFile 辅助函数存在', () => {
   assert.ok(ONBOARD.includes('function sftpReadFile('), 'ssh-onboard.js 必须有 sftpReadFile 函数')
 })
 
-// T3: tokens.json is read from relay server
-test('T3: probe 阶段读取 tokens.json', () => {
-  assert.ok(ONBOARD.includes('tokens.json'), 'ssh-onboard.js 必须读取 tokens.json')
+test('T3: probe 阶段保留 hubToken 赋值行', () => {
+  assertHubTokenAssignLine(readFileSync(onboardPath, 'utf8'))
 })
 
-// T4: /relay-autoconfig accepts body.autoHubToken as fallback
-test('T4: relay-autoconfig 端点接受 autoHubToken 作为 fallback', () => {
-  const routeIdx = UI_ROUTES.indexOf('relay-autoconfig')
-  assert.ok(routeIdx >= 0)
-  const block = UI_ROUTES.slice(routeIdx, routeIdx + 1500)
-  assert.ok(block.includes('autoHubToken'), 'relay-autoconfig 端点必须处理 autoHubToken 字段')
+test('T4: relay-autoconfig 保留 body.autoHubToken', () => {
+  assertBodyAutoHubToken(readFileSync(routesPath, 'utf8'))
 })
 
-// T5: client.js passes autoHubToken to relay-autoconfig
 test('T5: client.js 把 autoHubToken 传给 relay-autoconfig', () => {
   const fnIdx = SRC.indexOf('function autoConfigRelayFromProbe(')
   assert.ok(fnIdx >= 0)
@@ -38,28 +79,10 @@ test('T5: client.js 把 autoHubToken 传给 relay-autoconfig', () => {
   assert.ok(fnBlock.includes('relayHubToken'), '函数必须从 relayHost.relayHubToken 取值')
 })
 
-// M1 变异验证：把 tokens.json 读取去掉后，T3 的主断言必须红
-test('M1 变异：删掉 tokens.json 读取后主断言必须红', () => {
-  const onboardRaw = readFileSync(new URL('../lib/hub/ssh-onboard.js', import.meta.url), 'utf8')
-  assert.ok(onboardRaw.includes('tokens.json'), '基线：ssh-onboard.js 必须含 tokens.json')
-  const mutant = onboardRaw.replace(/tokens\.json/g, 'DELETED_TOKENS_FILE')
-  assert.notStrictEqual(mutant, onboardRaw, 'mutant 必须 ≠ 原始')
-  assert.throws(
-    () => assert.ok(mutant.includes('tokens.json'), 'ssh-onboard.js 必须读取 tokens.json'),
-    '变异后 T3 主断言必须失败'
-  )
+test('M1 变异：ssh-onboard.js:232 换成 // MUTATION 后 T3 主断言必须红', () => {
+  withDiskMutation(onboardPath, mutateLine232, assertHubTokenAssignLine)
 })
 
-// M2 变异验证：把 relay-autoconfig 里对 autoHubToken 的使用去掉后，主断言必须红
-test('M2 变异：删掉 autoHubToken 处理后主断言必须红', () => {
-  const routesRaw = readFileSync(new URL('../lib/hub/ui-routes.js', import.meta.url), 'utf8')
-  const routeIdx = routesRaw.indexOf('relay-autoconfig')
-  assert.ok(routeIdx >= 0, '基线：ui-routes.js 必须含 relay-autoconfig 端点')
-  const block = routesRaw.slice(routeIdx, routeIdx + 1550)
-  const mutant = block.replace(/autoHubToken/g, 'DELETED_AUTO_TOKEN')
-  assert.notStrictEqual(mutant, block, 'mutant 必须 ≠ 原始')
-  assert.throws(
-    () => assert.ok(mutant.includes('autoHubToken'), 'relay-autoconfig 必须处理 autoHubToken'),
-    '变异后主断言必须失败'
-  )
+test('M2 变异：body.autoHubToken 换成 body.DELETED 后 T4 主断言必须红', () => {
+  withDiskMutation(routesPath, mutateBodyAuto, assertBodyAutoHubToken)
 })
