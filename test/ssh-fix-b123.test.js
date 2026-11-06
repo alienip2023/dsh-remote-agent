@@ -66,10 +66,8 @@ test('B2: _numSort 数值排序 — fork.25 优先于 fork.9', () => {
   const sorted = numSort(files)
   assert.equal(sorted[0], 'dsh-remote-agent-0.10.1-fork.25.tgz', `数值排序第一应是 fork.25，实际：${sorted[0]}`)
   assert.equal(sorted[1], 'dsh-remote-agent-0.10.1-fork.9.tgz', `数值排序第二应是 fork.9，实际：${sorted[1]}`)
-  // Verify real source uses _numSort
-  const s = readFileSync(join(ROOT, 'lib/hub/ssh-onboard.js'), 'utf-8')
-  assert.ok(s.includes('_numSort'), '真实代码应调用 _numSort（变异验证：删除 _numSort 后本行红）')
-  assert.ok(!s.includes('.sort().reverse()'), '真实代码不应有字典序 .sort().reverse()')
+  // fork.27: tgz upload replaced by sftp file upload; _numSort no longer in source.
+  // Logic test above remains as regression guard for the sorting algorithm.
 })
 
 test('B2（变异验证）：改回字典序 sort().reverse() 后 fork.9 排第一', () => {
