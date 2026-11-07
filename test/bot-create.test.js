@@ -236,51 +236,27 @@ test('bot/create-result is emitted by requestId and a bad frame is dropped', () 
   assert.equal(got[0].remoteBotId, 'bot-1')
 })
 
-// E2E_REQUIRED_TYPES: BOT_CREATE must be in the set (knife: remove it → test red)
-test('E2E_REQUIRED_TYPES includes BOT_CREATE', () => {
-  // Import the real transport module and read E2E_REQUIRED_TYPES via a probe frame.
-  // Strategy: construct a NodeTransport with e2e=true, send a BOT_CREATE frame without
-  // encryption, and verify it is rejected with e2e-required.
-  const sentFrames = []
-  const transport = new NodeTransport({
-    mode: 'direct',
-    url: 'ws://127.0.0.1:1', // unreachable — we only test the gate, not the connection
-    token: 'tk',
-    hello: { nodeId: 'n', hostname: 'h', version: '0.0.1', caps: [], agentMode: false },
-    e2e: true,
-  })
-  // Override _send to capture frames; the gate is in _dispatch before send.
-  // Instead, call the exposed checkE2ERequired method (transport.isE2ERequired) if it exists.
-  // Since the method is internal, we use protocol.HUB_TO_NODE.BOT_CREATE directly and check
-  // the Set constructed in transport.js by triggering the guard indirectly.
-  // The cleanest approach: import the Set via a named export — but it's not exported.
-  // So: instantiate a minimal mock that exercises the gate without network.
-  // transport.js line 460: if (this.e2e && !wasEncrypted && E2E_REQUIRED_TYPES.has(frame.t))
-  // We cannot call _dispatch directly. But we CAN check that HUB_TO_NODE.BOT_CREATE
-  // is the same value as 'bot/create', and check the set semantically by using applyWorker
-  // to handle a bot/create frame and verifying the e2e-required error code is emitted.
+// 刀1：从 E2E_REQUIRED_TYPES 删掉 BOT_CREATE → isE2ERequired('bot/create') 返回 false → 测试红
+test('E2E_REQUIRED_TYPES includes BOT_CREATE (isE2ERequired)', async () => {
+  const { isE2ERequired } = await import('../lib/node/transport.js')
+  assert.equal(isE2ERequired(HUB_TO_NODE.BOT_CREATE), true, 'bot/create must be in E2E_REQUIRED_TYPES')
+  assert.equal(isE2ERequired('hello'), false, 'hello must NOT be in E2E_REQUIRED_TYPES')
+  assert.equal(isE2ERequired('ping'), false, 'ping must NOT be in E2E_REQUIRED_TYPES')
+})
 
-  // Simpler approach: verify the protocol constant matches expectations and that
-  // NodeTransport class constructor accepts the type. The real gate test is in the
-  // integration test. We test the Set membership by reading the source and asserting.
-  assert.equal(HUB_TO_NODE.BOT_CREATE, 'bot/create', 'protocol constant must be bot/create')
+// 刀2：把 !wasEncrypted 去掉 → checkE2EGate 对明文 bot/create 不再 reject → 测试红
+test('checkE2EGate rejects unencrypted bot/create when e2e is active', async () => {
+  const { checkE2EGate } = await import('../lib/node/transport.js')
+  const rejected = checkE2EGate({ t: HUB_TO_NODE.BOT_CREATE }, { e2e: true, wasEncrypted: false })
+  assert.equal(rejected.rejected, true, 'should reject cleartext bot/create when e2e is on')
+  assert.equal(rejected.code, 'e2e-required', `expected code e2e-required, got ${rejected.code}`)
+  assert.ok(typeof rejected.message === 'string' && rejected.message.includes('bot/create'), 'message should mention frame type')
 
-  // Check that E2E_REQUIRED_TYPES contains BOT_CREATE by using a real applyWorker
-  // round-trip: apply worker, inject a cleartext bot/create, expect e2e-required error.
-  const received = []
-  const fakeCtx = {
-    effects: [],
-    get: () => undefined,
-    provide: () => {},
-    effect: (fn) => { fakeCtx.effects.push(fn) },
-  }
-  // We just verify the constant value exists and the protocol is correct.
-  // The knife for this test: change BOT_CREATE to undefined in E2E_REQUIRED_TYPES
-  // → the constant check above would still pass, but the integration would break.
-  // For a meaningful behavioral test of the Set, we need the integration.
-  // Keep this as a protocol-level smoke test; the E2E integration is in engine-e2e.test.js.
-  assert.equal(typeof HUB_TO_NODE.BOT_CREATE, 'string')
-  assert.ok(HUB_TO_NODE.BOT_CREATE.length > 0)
+  const passed = checkE2EGate({ t: HUB_TO_NODE.BOT_CREATE }, { e2e: true, wasEncrypted: true })
+  assert.equal(passed.rejected, false, 'should pass encrypted bot/create')
+
+  const noE2E = checkE2EGate({ t: HUB_TO_NODE.BOT_CREATE }, { e2e: false, wasEncrypted: false })
+  assert.equal(noE2E.rejected, false, 'should pass when e2e is disabled')
 })
 
 // remote-agent:node-policy is provided to ctx with roots from config (knife: delete provide → test red)
