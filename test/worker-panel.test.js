@@ -90,12 +90,11 @@ test('client 的轮询会先探测角色，再决定拉哪个端点', () => {
   // 必须同时出现 hub 与 worker 两条拉取路径
   assert.match(code, /apiGet\('\/overview'\)/, '应拉 hub 的 /overview')
   assert.match(code, /apiGetPath\(STATUS_PATH\)/, '应拉副机的 STATUS_PATH')
-  // 判定逻辑：hub 失败后试 worker（而不是直接报错）
+  // 角色先读配置。主机读失败停在主机错误态，不得改画副机。
   const i = code.indexOf("apiGet('/overview')")
   const seg = code.slice(i, i + 1800)
-  assert.match(seg, /apiGetPath\(STATUS_PATH\)/, 'hub 端点失败后应回退到副机端点')
-  assert.match(seg, /mode: 'worker'/, '回退成功时应标记 mode=worker')
-  assert.match(seg, /mode: 'hub'/, 'hub 成功时应标记 mode=hub')
+  assert.ok(!/mode: 'worker'/.test(seg), '主机 overview 失败不得改成 mode=worker')
+  assert.match(code, /function loadWorker\(/, '副机路径仍应单独存在')
 })
 
 test('两个端点都失败时**如实报错**（不静默）', () => {
@@ -122,7 +121,7 @@ test('两个端点都失败时**如实报错**（不静默）', () => {
 function workerRenderBranch(code) {
   const cards = code.search(/(?:var|let|const) workerCards/)
   if (cards < 0) return ''
-  const i = code.lastIndexOf("if (state.mode === 'worker')", cards)
+  const i = code.lastIndexOf("runtimePlan.view === 'worker'", cards)
   if (i < 0) return ''
   // 到下一个顶层视图根节点之前：支持旧的 h('div', className:'dra-root') 和新的 h(Root,
   const endOld = code.indexOf("return h('div', { className: 'dra-root' }", cards)

@@ -238,18 +238,13 @@ test('client 有 setup 模式与对应端点常量', () => {
   assert.match(client, /mode: 'setup'/, "应支持 mode: 'setup'")
 })
 
-test('client 的探测有三层回退：hub → worker → setup', () => {
+test('未配置进 setup，主机读失败不改画副机', () => {
   const code = stripComments(client)
+  assert.match(code, /mode: 'setup'/, '未配置仍应进 setup')
   const i = code.indexOf("apiGet('/overview')")
   assert.ok(i >= 0, '应有 hub 探测')
   const seg = code.slice(i, i + 3200)
-  // 三层都要出现，且顺序正确
-  const hub = seg.indexOf("mode: 'hub'")
-  const worker = seg.indexOf("mode: 'worker'")
-  const setup = seg.indexOf("mode: 'setup'")
-  assert.ok(hub >= 0 && worker >= 0 && setup >= 0, '三层回退都应存在')
-  assert.ok(hub < worker, 'hub 判定应在 worker 之前')
-  assert.ok(worker < setup, 'worker 判定应在 setup 之前')
+  assert.ok(!/mode: 'worker'/.test(seg), 'overview 失败不得改成 worker')
 })
 
 test('client 有 SetupView 组件且能写入', () => {
