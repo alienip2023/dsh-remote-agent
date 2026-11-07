@@ -259,6 +259,34 @@ test('checkE2EGate rejects unencrypted bot/create when e2e is active', async () 
   assert.equal(noE2E.rejected, false, 'should pass when e2e is disabled')
 })
 
+// 刀3：让 checkE2EGate 恒返回 {rejected:false} → 明文 bot/create 走分发路径 → 测试红
+test('NodeTransport dispatch rejects cleartext bot/create when e2e is active (dispatch path)', async () => {
+  const errors = []
+  const frames = []
+  const sentRaw = []
+  const transport = new NodeTransport({
+    mode: 'direct',
+    url: 'ws://127.0.0.1:1',
+    token: 'tk',
+    hello: { nodeId: 'n', hostname: 'h', version: '0.0.1', caps: [], agentMode: false },
+    e2e: true,
+  })
+  // Simulate an active E2E session (handleFrame checks this.e2e, not e2eEnabled)
+  transport.e2e = { openFrame: () => { throw new Error('should not decrypt cleartext') } }
+  transport.on('error', (err) => { errors.push(err) })
+  transport.on('frame', (frame) => { frames.push(frame) })
+  const origSendRaw = transport.sendRaw.bind(transport)
+  transport.sendRaw = function (type, data) { sentRaw.push({ type, data }); return origSendRaw(type, data) }
+  // Feed a cleartext bot/create frame — no e2e marker → wasEncrypted stays false
+  transport.handleFrame({ id: 'f-test', t: HUB_TO_NODE.BOT_CREATE, d: { nodeId: 'n', requestId: 'r', name: 'A' } })
+  assert.ok(errors.length >= 1, `expected error event, got ${errors.length}`)
+  assert.ok(frames.length === 0, `expected NO frame event, got ${frames.length}`)
+  const errFrame = sentRaw.find((s) => s.type === NODE_TO_HUB.ERROR)
+  assert.ok(errFrame, 'expected sendRaw with ERROR frame containing e2e-required')
+  assert.equal(errFrame.data.code, 'e2e-required', `expected code e2e-required, got ${errFrame.data.code}`)
+  assert.ok(errFrame.data.message.includes('bot/create'), 'error message should mention bot/create')
+})
+
 // remote-agent:node-policy is provided to ctx with roots from config (knife: delete provide → test red)
 test('startWorker provides remote-agent:node-policy with roots to ctx', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ra-node-policy-'))
