@@ -190,8 +190,8 @@ async function apply(text, body, { remoteAddress = '127.0.0.1', method = 'POST',
   }
 }
 
-test('版本是 0.10.1-fork.34', () => {
-  assert.equal(PKG.version, '0.10.1-fork.34')
+test('版本是 0.10.1-fork.35', () => {
+  assert.equal(PKG.version, '0.10.1-fork.35')
 })
 
 test('listenPort 0 与 65536 拒绝，文件原样', async () => {
