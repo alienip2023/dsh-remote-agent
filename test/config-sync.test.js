@@ -449,3 +449,62 @@ describe('config-sync: hub source receives nodeId', () => {
   })
 })
 
+describe('1A-8: stale revision check (=== not <=)', () => {
+  let tmp
+  beforeEach(() => { tmp = makeTmpHome() })
+  afterEach(() => { rmSync(tmp.dshHome, { recursive: true, force: true }); rmSync(tmp.profileDir, { recursive: true, force: true }) })
+
+  test('1A8-old-large-hash: appliedRevision=1181119400 (old large hash), new revision=42 → must apply, not stale', () => {
+    // regression: before fix revision <= appliedRevision → 42 <= 1181119400 → silently dropped
+    writeFileSync(join(tmp.dshHome, 'config-sync.json'), JSON.stringify({ appliedRevision: 1181119400 }))
+    const logs = []
+    const result = handleConfigPush({
+      data: {
+        revision: 42,
+        providers: [{ id: 'gw-provider', baseURL: 'http://100.64.0.3:4387/gw/gw-provider/v1', apiKey: 'tok-new', apiKeyEnv: 'GATEWAY_TOKEN_dshtest_1', models: [{ id: 'm1', name: 'M1' }] }],
+      },
+      dshHome: tmp.dshHome,
+      profileDir: tmp.profileDir,
+      e2e: true,
+      wasEncrypted: true,
+      send: () => {},
+      logger: (level, msg, meta) => logs.push({ level, msg, meta }),
+      _restartFn: () => {},
+    })
+    assert.equal(result.ok, true, 'must apply, not stale')
+    assert.equal(result.stale, undefined, 'stale must not be set')
+    assert.equal(result.appliedRevision, 42, 'appliedRevision must update to 42')
+    const creds = readFileSync(join(tmp.dshHome, '.credentials.yaml'), 'utf8')
+    assert.ok(creds.includes('GATEWAY_TOKEN_dshtest_1'), 'credentials.yaml must contain new ref')
+    const syncState = JSON.parse(readFileSync(join(tmp.dshHome, 'config-sync.json'), 'utf8'))
+    assert.equal(syncState.appliedRevision, 42, 'config-sync.json appliedRevision must be 42')
+    assert.equal(syncState.schema, 2, 'config-sync.json schema must be 2')
+    const staleLog = logs.find(l => l.msg === 'config-sync: stale revision discarded')
+    assert.equal(staleLog, undefined, 'must NOT log stale for old-large-hash scenario')
+  })
+
+  test('1A8-same-revision-stale: revision === appliedRevision → stale:true, no write, warn logged', () => {
+    // First push to set appliedRevision=99
+    handleConfigPush({
+      data: { revision: 99, providers: [{ id: 'p1', baseURL: 'https://up.example.com/v1', apiKey: 'sk-99', apiKeyEnv: 'P1_KEY', models: [{ id: 'm1', name: 'M1' }] }] },
+      dshHome: tmp.dshHome, profileDir: tmp.profileDir, e2e: true, wasEncrypted: true, send: () => {}, logger: () => {}, _restartFn: () => {},
+    })
+    const credsBefore = readFileSync(join(tmp.dshHome, '.credentials.yaml'), 'utf8')
+    const mtimeBefore = (() => { const s = (() => { try { return require('node:fs').statSync(join(tmp.dshHome, 'config-sync.json')) } catch { return null } })(); return s?.mtimeMs ?? 0 })()
+    const logs = []
+    const result = handleConfigPush({
+      data: { revision: 99, providers: [{ id: 'p1', baseURL: 'https://up.example.com/v1', apiKey: 'sk-99', apiKeyEnv: 'P1_KEY', models: [{ id: 'm1', name: 'M1' }] }] },
+      dshHome: tmp.dshHome, profileDir: tmp.profileDir, e2e: true, wasEncrypted: true, send: () => {}, logger: (level, msg, meta) => logs.push({ level, msg, meta }), _restartFn: () => {},
+    })
+    assert.equal(result.stale, true, 'must be stale')
+    assert.equal(result.ok, true, 'stale is ok')
+    const credsAfter = readFileSync(join(tmp.dshHome, '.credentials.yaml'), 'utf8')
+    assert.equal(credsAfter, credsBefore, 'credentials.yaml must not change on stale')
+    const staleLog = logs.find(l => l.msg === 'config-sync: stale revision discarded')
+    assert.ok(staleLog, 'must log stale revision discarded')
+    assert.equal(staleLog.level, 'warn', 'stale log must be warn level')
+    assert.equal(staleLog.meta?.revision, 99, 'meta.revision must be in stale log')
+    assert.equal(staleLog.meta?.appliedRevision, 99, 'meta.appliedRevision must be in stale log')
+  })
+})
+
