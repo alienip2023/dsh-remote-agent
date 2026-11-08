@@ -165,3 +165,55 @@ test('13. a registry with no hasE2E at all is treated as no session (fail closed
   assert.equal(sent, 0)
   assert.ok(logs.some(l => l.level === 'warn' && /no e2e session/.test(l.msg)))
 })
+
+test('14. only apiKeyEnv changes (id unchanged) → shouldRestart=true', async () => {
+  const { mkdtempSync, mkdirSync, rmSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const { handleConfigPush } = await import('../lib/node/config-sync.js')
+  const base = mkdtempSync(join(tmpdir(), 'fp-test-'))
+  const dshHome = join(base, '.dsh')
+  const profileDir = join(dshHome, 'profiles', 'web')
+  mkdirSync(profileDir, { recursive: true })
+  const noRestart = () => {}
+  try {
+    const acks = []
+    const send = (type, data) => { acks.push({ type, data }) }
+    // First push: establish baseline with apiKeyEnv=OLD_KEY
+    const r1 = handleConfigPush({
+      data: { revision: 1, providers: [{ id: 'p1', baseURL: 'https://api.test.com/v1', apiKey: 'sk-1', apiKeyEnv: 'OLD_KEY', models: [] }] },
+      dshHome, profileDir, e2e: true, wasEncrypted: true, send, _restartFn: noRestart,
+    })
+    assert.equal(r1.ok, true)
+    // Second push: same id + baseURL, but different apiKeyEnv → token rotated → must restart
+    const r2 = handleConfigPush({
+      data: { revision: 2, providers: [{ id: 'p1', baseURL: 'https://api.test.com/v1', apiKey: 'sk-2', apiKeyEnv: 'NEW_KEY', models: [] }] },
+      dshHome, profileDir, e2e: true, wasEncrypted: true, send, _restartFn: noRestart,
+    })
+    assert.equal(r2.ok, true)
+    assert.equal(r2.shouldRestart, true, 'token rotation (apiKeyEnv change) must trigger restart')
+  } finally { rmSync(base, { recursive: true, force: true }) }
+})
+
+test('15. identical payload applied twice → shouldRestart=false on second push', async () => {
+  const { mkdtempSync, mkdirSync, rmSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const { handleConfigPush } = await import('../lib/node/config-sync.js')
+  const base = mkdtempSync(join(tmpdir(), 'fp-test2-'))
+  const dshHome = join(base, '.dsh')
+  const profileDir = join(dshHome, 'profiles', 'web')
+  mkdirSync(profileDir, { recursive: true })
+  const noRestart = () => {}
+  try {
+    const acks = []
+    const send = (type, data) => { acks.push({ type, data }) }
+    const payload = { providers: [{ id: 'p1', baseURL: 'https://api.test.com/v1', apiKey: 'sk-1', apiKeyEnv: 'SAME_KEY', models: [] }] }
+    handleConfigPush({ data: { revision: 1, ...payload }, dshHome, profileDir, e2e: true, wasEncrypted: true, send, _restartFn: noRestart })
+    // Re-apply identical payload with a new revision number (content unchanged, same fingerprint)
+    const r2 = handleConfigPush({ data: { revision: 2, ...payload }, dshHome, profileDir, e2e: true, wasEncrypted: true, send, _restartFn: noRestart })
+    assert.equal(r2.ok, true)
+    assert.equal(r2.shouldRestart, false, 'identical provider fingerprint must not trigger restart')
+  } finally { rmSync(base, { recursive: true, force: true }) }
+})
+

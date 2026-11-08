@@ -19,6 +19,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { handleConfigPush, handleConfigSyncRequest, sendConfigSyncRequest } from '../lib/node/config-sync.js'
+import { createConfigSync } from '../lib/hub/config-sync.js'
 import { computeRevision } from '../lib/hub/stable-hash.js'
 
 function makeTmpHome() {
@@ -410,3 +411,24 @@ describe('config-sync: computeRevision (stable serialization)', () => {
     assert.notEqual(r1, r2, 'adding a model must produce a different revision hash')
   })
 })
+
+describe('config-sync: hub source receives nodeId', () => {
+  test('sourceFn receives the nodeId of each pushed node', () => {
+    const calls = []
+    const source = (nodeId) => {
+      calls.push(nodeId)
+      return { providers: [{ id: 'p1', baseURL: 'https://api.test.com/v1', apiKey: 'sk-x', apiKeyEnv: 'P1_KEY', models: [{ id: 'm1', name: 'M1' }] }] }
+    }
+    const sent = []
+    const registry = {
+      hasE2E: () => true,
+      send: (nodeId, _type, _data) => { sent.push(nodeId); return true },
+    }
+    const sync = createConfigSync({ registry, source, log: () => {} })
+    sync.sendPush('node-alpha')
+    sync.sendPush('node-beta')
+    assert.deepEqual(calls, ['node-alpha', 'node-beta'], 'source must receive the nodeId for each push')
+    assert.deepEqual(sent, ['node-alpha', 'node-beta'])
+  })
+})
+
