@@ -44,13 +44,12 @@ test('1A7-e2e-push: real handleE2EOffer triggers e2eEstablished → config push'
     providers: [{ id: 'alpha', api: 'openai-completions', apiKeyEnv: 'ALPHA_KEY', apiKey: 'sk-x', models: [{ id: 'm1' }] }],
     defaultModel: 'alpha/m1',
   })
-  const configSync = createConfigSync({
+  createConfigSync({
     registry,
     source,
     log: (level, msg, meta) => logs.push({ level, msg, meta }),
   })
   registry.on('configSyncRequest', (ev) => configSync.handleSyncRequest(ev))
-  registry.on('e2eEstablished', (ev) => configSync.handleSyncRequest(ev))
 
   // Register a node with a real E2E-capable connection (needs online + a conn for send)
   const nodeConn = {
