@@ -49,7 +49,6 @@ test('1A7-e2e-push: real handleE2EOffer triggers e2eEstablished → config push'
     source,
     log: (level, msg, meta) => logs.push({ level, msg, meta }),
   })
-  registry.on('configSyncRequest', (ev) => configSync.handleSyncRequest(ev))
 
   // Register a node with a real E2E-capable connection (needs online + a conn for send)
   const nodeConn = {
