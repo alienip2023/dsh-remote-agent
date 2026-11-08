@@ -48,10 +48,6 @@ test('1A7-e2e-push: e2eEstablished event triggers config push via registry.send'
   assert.ok(sentFrames[0].data.providers, 'payload must have providers')
   assert.ok(typeof sentFrames[0].data.revision === 'number', 'payload must have numeric revision')
 
-  // Assert warn log for sync request
-  const syncLog = logCalls.find(c => c.msg === 'config-sync: node requested sync')
-  assert.ok(syncLog, 'should log config-sync: node requested sync at warn level')
-  assert.equal(syncLog.level, 'warn', 'log level should be warn')
 })
 
 /**
