@@ -61,13 +61,15 @@ test('1. appliedRevision=0 → exactly one config-push frame, payload.revision =
   assert.equal(logs.some(l => l.level === 'warn'), false)
 })
 
-test('2. appliedRevision >= revision → nothing is sent', () => {
+test('2. appliedRevision === revision → nothing is sent; stale larger hash → push', () => {
   const { request, frames } = setup({ source: PAYLOAD })
   const rev = computeRevision(PAYLOAD())
+  // Equal revision → skip
   request(rev)
   assert.equal(frames().length, 0)
+  // Larger stale hash (different content) → must push (1A-5 fix: === not >=)
   request(rev + 1)
-  assert.equal(frames().length, 0)
+  assert.equal(frames().length, 1)
 })
 
 test('3. source returns null / no source → nothing sent, nothing thrown', () => {

@@ -303,7 +303,7 @@ describe('config-sync: handleConfigSyncRequest', () => {
     assert.equal(pushed.payload.revision, 5)
   })
 
-  test('node revision >= currentRevision → skip', () => {
+  test('node revision === currentRevision → skip (same hash)', () => {
     let pushed = null
     const result = handleConfigSyncRequest({
       data: { appliedRevision: 5 },
@@ -315,6 +315,23 @@ describe('config-sync: handleConfigSyncRequest', () => {
     assert.equal(result.ok, true)
     assert.equal(result.skipped, true)
     assert.equal(pushed, null)
+  })
+
+  test('1A5-stale-hash: node appliedRevision > currentRevision but different content → push sent', () => {
+    // Regression: >= comparison meant a node with a larger old hash never got updates.
+    // After the fix (===), a larger stale hash is treated as mismatch and push is sent.
+    let pushed = null
+    const result = handleConfigSyncRequest({
+      data: { appliedRevision: 9999999999 },  // large old hash, bigger than current
+      currentRevision: 5,
+      getPayload: () => ({ providers: [{ id: 'p-new' }] }),
+      sendPush: (nodeId, payload) => { pushed = { nodeId, payload } },
+      nodeId: 'test-node',
+    })
+    assert.equal(result.ok, true)
+    assert.equal(result.pushed, true)
+    assert.ok(pushed !== null, 'sendPush should have been called')
+    assert.equal(pushed.nodeId, 'test-node')
   })
 
   test('no payload source → ok:false', () => {
