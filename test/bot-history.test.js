@@ -12,6 +12,7 @@ const fakeE2E = () => ({ sealFrame: (_type, _id, d) => ({ e2e: E2E_MARKER, inner
 
 async function hop(nodeId, payload, receiver) {
   const wire = []
+  const specs = []
   const relay = { ready: true, send: (nid, text) => { wire.push(text); return true } }
   const registry = new NodeRegistry({ log() {}, relay })
   registry.nodes.set(nodeId, { nodeId, online: true, lastSeen: 0, e2e: fakeE2E() })
@@ -23,20 +24,25 @@ async function hop(nodeId, payload, receiver) {
   assert.equal(frame.t, HUB_TO_NODE.BOT_HISTORY)
   const d = frame.d?.e2e === E2E_MARKER ? frame.d.inner : frame.d
   const replies = []
-  const ctx = { get: (name) => (name === BOT_PAGE_RECEIVER ? receiver : undefined) }
+  // Wrap receiver to capture the spec it received
+  const wrappedReceiver = receiver ? async (spec) => { specs.push(spec); return receiver(spec) } : undefined
+  const ctx = { get: (name) => (name === BOT_PAGE_RECEIVER ? wrappedReceiver : undefined) }
   await handleBotHistoryFrame({ frame, data: d, ctx, send: (type, data) => replies.push({ type, data }), sendError() {} })
-  return { replies }
+  return { replies, specs }
 }
 
 const ITEMS = [{ kind: 'user', text: 'hello' }, { kind: 'bot', text: '2+2=4' }]
 
-test('1. receiver returns items → bot/history-result with items reaches the hub', async () => {
-  const { replies } = await hop('n1', {}, async () => ({ ok: true, sessionId: 'session-abc', items: ITEMS, cursor: null }))
+test('1. receiver returns items → bot/history-result with items reaches the hub; spec has remoteBotId', async () => {
+  const { replies, specs } = await hop('n1', {}, async () => ({ ok: true, sessionId: 'session-abc', items: ITEMS, cursor: null }))
   assert.equal(replies.length, 1)
   assert.equal(replies[0].type, 'bot/history-result')
   assert.equal(replies[0].data.ok, true)
   assert.deepEqual(replies[0].data.items, ITEMS)
   assert.equal(replies[0].data.sessionId, 'session-abc')
+  // The receiver must receive remoteBotId (the knife removes this from the spec)
+  assert.equal(specs.length, 1, 'receiver must be called')
+  assert.equal(specs[0].remoteBotId, 'session-abc', 'receiver must get remoteBotId')
   // hub-side validator must accept
   const v = validateBotHistoryResult({ requestId: 'req-1', ...replies[0].data })
   assert.equal(v.ok, true)
