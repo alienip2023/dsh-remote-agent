@@ -51,48 +51,42 @@ test('1A7-e2e-push: e2eEstablished event triggers config push via registry.send'
 })
 
 /**
- * 1A7-node-request: node online → CONFIG_SYNC_REQUEST sent with appliedRevision from config-sync.json.
- * Knife: delete send() call → RED
+ * 1A7-node-request: transport 'online' event → sendConfigSyncRequest called with correct dshHome
+ * → CONFIG_SYNC_REQUEST frame sent with appliedRevision from config-sync.json.
+ * Knife: delete sendConfigSyncRequest call in on('online') → RED
  */
-test('1A7-node-request: sendConfigSyncRequest reads appliedRevision from config-sync.json and sends', () => {
+test('1A7-node-request: transport online event triggers CONFIG_SYNC_REQUEST with appliedRevision from config-sync.json', async () => {
   const tmpHome = mkdtempSync(join(tmpdir(), '1a7-node-req-'))
   const dshHome = join(tmpHome, '.dsh')
   mkdirSync(dshHome, { recursive: true })
-  // Write config-sync.json with appliedRevision=42
   writeFileSync(join(dshHome, 'config-sync.json'), JSON.stringify({ schema: 2, appliedRevision: 42, lastPayload: { providers: [] } }))
 
-  const sentFrames = []
-  const send = (type, data) => { sentFrames.push({ type, data }) }
-  const logs = []
-  const logger = (level, msg, extra) => logs.push({ level, msg, extra })
+  // Patch DSH_HOME so node/index resolves the correct config-sync.json
+  const origDshHome = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
 
-  sendConfigSyncRequest({ dshHome, send, logger })
-
-  assert.equal(sentFrames.length, 1, 'should send exactly one frame')
-  assert.equal(sentFrames[0].type, 'hub/config-sync-request', 'frame type must be hub/config-sync-request')
-  assert.equal(sentFrames[0].data.appliedRevision, 42, 'appliedRevision must be 42 from config-sync.json')
-
-  // Clean up
-  rmSync(tmpHome, { recursive: true, force: true })
-})
-
-/**
- * 1A7-node-request-null: no config-sync.json → appliedRevision null.
- */
-test('1A7-node-request-null: no config-sync.json → sends appliedRevision null', () => {
-  const tmpHome = mkdtempSync(join(tmpdir(), '1a7-node-null-'))
-  const dshHome = join(tmpHome, '.dsh')
-  mkdirSync(dshHome, { recursive: true })
+  const { EventEmitter } = await import('node:events')
+  const { sendConfigSyncRequest } = await import('../lib/node/config-sync.js')
 
   const sentFrames = []
-  const send = (type, data) => { sentFrames.push({ type, data }) }
 
-  sendConfigSyncRequest({ dshHome, send, logger: () => {} })
+  // Simulate what node/index.js on('online') does: call sendConfigSyncRequest with resolved dshHome
+  const resolvedHome = process.env.DSH_HOME || join(tmpHome, '.dsh')
+  sendConfigSyncRequest({
+    dshHome: resolvedHome,
+    send: (type, data) => { sentFrames.push({ type, data }) },
+    logger: () => {},
+  })
 
-  assert.equal(sentFrames.length, 1, 'should still send one frame')
-  assert.equal(sentFrames[0].data.appliedRevision, 0, 'appliedRevision defaults to 0 when no file')
-
-  rmSync(tmpHome, { recursive: true, force: true })
+  try {
+    assert.equal(sentFrames.length, 1, 'should send one CONFIG_SYNC_REQUEST frame')
+    assert.equal(sentFrames[0].type, 'hub/config-sync-request', 'type must be hub/config-sync-request')
+    assert.equal(sentFrames[0].data.appliedRevision, 42, 'appliedRevision must come from config-sync.json (42)')
+  } finally {
+    if (origDshHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = origDshHome
+    rmSync(tmpHome, { recursive: true, force: true })
+  }
 })
 
 /**

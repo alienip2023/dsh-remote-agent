@@ -58,7 +58,10 @@ test('1. appliedRevision=0 → exactly one config-push frame, payload.revision =
   assert.equal(d.revision, computeRevision(d))
   assert.notEqual(d.revision, 0)
   assert.equal(d.providers[0].apiKey, 'sk-x')
-  assert.equal(logs.some(l => l.level === 'warn'), false)
+  // 1A-7: handleSyncRequest now logs warn 'config-sync: node requested sync' (diagnostic)
+  const warnLogs = logs.filter(l => l.level === 'warn')
+  assert.equal(warnLogs.length, 1, 'exactly one warn: node requested sync')
+  assert.equal(warnLogs[0].msg, 'config-sync: node requested sync', 'warn msg matches')
 })
 
 test('2. appliedRevision === revision → nothing is sent; stale larger hash → push', () => {
