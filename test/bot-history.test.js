@@ -86,17 +86,39 @@ import { isE2ERequired } from '../lib/node/transport.js'
 // Knife: comment out the case in node/index.js doesn't make handleBotHistoryFrame
 // not exist, so we test the dispatch binding differently:
 // We verify that node/index.js exports the case via a pattern test on the source.
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
-const __dirname2 = dirname(fileURLToPath(import.meta.url))
-const nodeIndexSrc = readFileSync(join(__dirname2, '../lib/node/index.js'), 'utf8')
+import { createFrameDispatcher } from '../lib/node/dispatch.js'
 
-test('6. node/index.js dispatch case: BOT_HISTORY case calls handleBotHistoryFrame', () => {
-  // Structural test: the case must be present AND call handleBotHistoryFrame
-  assert.ok(nodeIndexSrc.includes('HUB_TO_NODE.BOT_HISTORY'), 'dispatch case must reference HUB_TO_NODE.BOT_HISTORY')
-  assert.ok(nodeIndexSrc.includes('handleBotHistoryFrame'), 'dispatch case must call handleBotHistoryFrame')
-  // Together they prove the routing; removing the case makes both assertions false
+// ── 6. behavioral dispatch test via createFrameDispatcher ─────────────────────
+test('6. createFrameDispatcher: bot/history frame reaches receiver and returns bot/history-result', async () => {
+  const sent = []
+  const receiverSpecs = []
+  const fakeReceiver = async (spec) => {
+    receiverSpecs.push(spec)
+    return { ok: true, sessionId: 'session-x', items: [{ kind: 'user', text: 'hi' }], cursor: null }
+  }
+  const ctx = {
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    get(name) {
+      if (name === 'remote-agent:bot-page') return fakeReceiver
+      return undefined
+    },
+  }
+  const send = (type, data) => { sent.push({ type, data }); return true }
+  const sendError = () => {}
+  const dispatch = createFrameDispatcher({ ctx, send, sendError, engine: null, logger: ctx.logger })
+
+  dispatch({ id: 'f1', t: HUB_TO_NODE.BOT_HISTORY, d: { nodeId: 'n1', requestId: 'r1', remoteBotId: 'session-x' } })
+
+  // wait for async receiver
+  const started = Date.now()
+  while (sent.length === 0 && Date.now() - started < 500) await new Promise(r => setImmediate(r))
+
+  assert.equal(receiverSpecs.length, 1, 'receiver must be called once')
+  assert.equal(receiverSpecs[0].remoteBotId, 'session-x', 'receiver must get correct remoteBotId')
+  const result = sent.find(s => s.type === NODE_TO_HUB.BOT_HISTORY_RESULT)
+  assert.ok(result, 'bot/history-result frame must be sent')
+  assert.equal(result.data.requestId, 'r1', 'requestId must match')
+  assert.equal(result.data.ok, true)
 })
 
 // ── 7. real ingest path (knife: delete emit in registry-ingest.js → red) ──────
@@ -128,4 +150,62 @@ test('8. handleBotHistoryFrame forwards cursor unchanged to receiver', async () 
   )
   assert.deepEqual(capturedCursors[0], { part: 3 }, 'cursor must be forwarded to receiver unchanged')
   assert.equal(specs[0].remoteBotId, 'session-abc', 'remoteBotId must still be present when cursor is set')
+})
+
+// ── 6b. BOT_TURN behavioral dispatch test ────────────────────────────────────
+test('6b. createFrameDispatcher: bot/turn frame reaches receiver', async () => {
+  const sent = []
+  const receiverSpecs = []
+  const fakeReceiver = async (spec) => {
+    receiverSpecs.push(spec)
+    return { ok: true, text: 'pong', tokenCount: 0 }
+  }
+  const ctx = {
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    get(name) {
+      if (name === 'remote-agent:bot-turn') return fakeReceiver
+      return undefined
+    },
+  }
+  const send = (type, data) => { sent.push({ type, data }); return true }
+  const sendError = () => {}
+  const dispatch = createFrameDispatcher({ ctx, send, sendError, engine: {}, logger: ctx.logger })
+
+  // Provide a valid turn frame that passes validateBotTurn
+  dispatch({ id: 'f1', t: HUB_TO_NODE.BOT_TURN, d: { nodeId: 'n1', remoteBotId: 'session-t', exchangeId: 'ex-1', text: 'hello' } })
+
+  const started = Date.now()
+  while (sent.length === 0 && Date.now() - started < 500) await new Promise(r => setImmediate(r))
+
+  assert.equal(receiverSpecs.length, 1, 'turn receiver must be called once')
+  assert.ok(sent.some(s => s.type === NODE_TO_HUB.BOT_TURN_RESULT), 'bot/turn-result frame must be sent')
+})
+
+// ── 6c. BOT_CREATE behavioral dispatch test ───────────────────────────────────
+test('6c. createFrameDispatcher: bot/create frame reaches receiver', async () => {
+  const sent = []
+  const receiverSpecs = []
+  const fakeReceiver = async (spec) => {
+    receiverSpecs.push(spec)
+    return { ok: true, remoteBotId: 'bot-created-1', name: 'Alpha', role: '' }
+  }
+  const ctx = {
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    get(name) {
+      if (name === 'remote-agent:bot-create') return fakeReceiver
+      return undefined
+    },
+  }
+  const send = (type, data) => { sent.push({ type, data }); return true }
+  const sendError = () => {}
+  const dispatch = createFrameDispatcher({ ctx, send, sendError, engine: {}, logger: ctx.logger })
+
+  dispatch({ id: 'f1', t: HUB_TO_NODE.BOT_CREATE, d: { nodeId: 'n1', requestId: 'rc1', name: 'Alpha', role: '' } })
+
+  const started = Date.now()
+  while (sent.length === 0 && Date.now() - started < 500) await new Promise(r => setImmediate(r))
+
+  assert.equal(receiverSpecs.length, 1, 'create receiver must be called once')
+  assert.equal(receiverSpecs[0].name, 'Alpha', 'receiver must get name')
+  assert.ok(sent.some(s => s.type === NODE_TO_HUB.BOT_CREATE_RESULT), 'bot/create-result frame must be sent')
 })
