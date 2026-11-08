@@ -197,9 +197,9 @@ describe('config-sync: handleConfigPush', () => {
       send: () => {}, logger: () => {},
       _restartFn: () => {},
     })
-    // 推同样 provider 集合 + revision=2
+    // 推同样 provider 集合 + revision=2（apiKey 不变，只改 revision）
     const result = handleConfigPush({
-      data: makePayload(2, [{ id: 'p1', baseURL: 'https://a.com', apiKey: 'sk-1b', apiKeyEnv: 'P1_KEY', models: [] }]),
+      data: makePayload(2, [{ id: 'p1', baseURL: 'https://a.com', apiKey: 'sk-1', apiKeyEnv: 'P1_KEY', models: [] }]),
       dshHome: tmp.dshHome, profileDir: tmp.profileDir,
       send: () => {}, logger: () => {},
       _restartFn: () => {},

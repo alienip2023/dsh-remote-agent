@@ -217,3 +217,83 @@ test('15. identical payload applied twice → shouldRestart=false on second push
   } finally { rmSync(base, { recursive: true, force: true }) }
 })
 
+test('1A4-legacy: state file without schema:2 → shouldRestart=true + legacy-fingerprint warn', async () => {
+  const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const { handleConfigPush } = await import('../lib/node/config-sync.js')
+  const base = mkdtempSync(join(tmpdir(), 'legacy-test-'))
+  const dshHome = join(base, '.dsh')
+  const profileDir = join(dshHome, 'profiles', 'web')
+  mkdirSync(profileDir, { recursive: true })
+  const noRestart = () => {}
+  // Write pre-v2 state file (no schema field)
+  writeFileSync(
+    join(dshHome, 'config-sync.json'),
+    JSON.stringify({ appliedRevision: 1, lastPayload: { providers: [{ id: 'p1' }] } }, null, 2) + '\n',
+    { mode: 0o600 }
+  )
+  const logs = []
+  const log = (level, msg, meta) => logs.push({ level, msg, meta })
+  try {
+    const acks = []
+    const send = (type, data) => { acks.push({ type, data }) }
+    const r = handleConfigPush({
+      data: { revision: 2, providers: [{ id: 'p1', baseURL: 'https://api.test.com/v1', apiKey: 'sk-1', apiKeyEnv: 'P1_KEY', models: [] }] },
+      dshHome, profileDir, e2e: true, wasEncrypted: true, send, _restartFn: noRestart, logger: log,
+    })
+    assert.equal(r.ok, true)
+    assert.equal(r.shouldRestart, true, 'legacy state must trigger restart')
+    assert.ok(logs.some(l => l.level === 'warn' && /legacy-fingerprint/.test(l.msg)), 'legacy-fingerprint warn must appear: ' + JSON.stringify(logs))
+  } finally { rmSync(base, { recursive: true, force: true }) }
+})
+
+test('1A4-legacy one-time: after schema:2 upgrade, same payload → shouldRestart=false', async () => {
+  const { mkdtempSync, mkdirSync, rmSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const { handleConfigPush } = await import('../lib/node/config-sync.js')
+  const base = mkdtempSync(join(tmpdir(), 'legacy-once-'))
+  const dshHome = join(base, '.dsh')
+  const profileDir = join(dshHome, 'profiles', 'web')
+  mkdirSync(profileDir, { recursive: true })
+  const noRestart = () => {}
+  const payload = { providers: [{ id: 'p1', baseURL: 'https://api.test.com/v1', apiKey: 'sk-1', apiKeyEnv: 'P1_KEY', models: [] }] }
+  try {
+    const send = (type, data) => {}
+    // First push: writes schema:2 to state
+    handleConfigPush({ data: { revision: 1, ...payload }, dshHome, profileDir, e2e: true, wasEncrypted: true, send, _restartFn: noRestart })
+    // Second push: schema:2 present, same fingerprint → should NOT restart
+    const r2 = handleConfigPush({ data: { revision: 2, ...payload }, dshHome, profileDir, e2e: true, wasEncrypted: true, send, _restartFn: noRestart })
+    assert.equal(r2.ok, true)
+    assert.equal(r2.shouldRestart, false, 'after schema:2 upgrade, same fingerprint must not restart')
+  } finally { rmSync(base, { recursive: true, force: true }) }
+})
+
+test('1A4-apikey: only apiKey value changes (apiKeyEnv unchanged) → shouldRestart=true', async () => {
+  const { mkdtempSync, mkdirSync, rmSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const { handleConfigPush } = await import('../lib/node/config-sync.js')
+  const base = mkdtempSync(join(tmpdir(), 'apikey-test-'))
+  const dshHome = join(base, '.dsh')
+  const profileDir = join(dshHome, 'profiles', 'web')
+  mkdirSync(profileDir, { recursive: true })
+  const noRestart = () => {}
+  try {
+    const send = (type, data) => {}
+    // First push: establish baseline
+    handleConfigPush({
+      data: { revision: 1, providers: [{ id: 'p1', baseURL: 'https://api.test.com/v1', apiKey: 'sk-original', apiKeyEnv: 'P1_KEY', models: [] }] },
+      dshHome, profileDir, e2e: true, wasEncrypted: true, send, _restartFn: noRestart,
+    })
+    // Second push: same id, baseURL, apiKeyEnv — but different apiKey value (upstream key rotated)
+    const r2 = handleConfigPush({
+      data: { revision: 2, providers: [{ id: 'p1', baseURL: 'https://api.test.com/v1', apiKey: 'sk-rotated', apiKeyEnv: 'P1_KEY', models: [] }] },
+      dshHome, profileDir, e2e: true, wasEncrypted: true, send, _restartFn: noRestart,
+    })
+    assert.equal(r2.ok, true)
+    assert.equal(r2.shouldRestart, true, 'apiKey value change must trigger restart (worker reads credentials once at startup)')
+  } finally { rmSync(base, { recursive: true, force: true }) }
+})
+
