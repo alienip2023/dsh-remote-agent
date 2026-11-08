@@ -390,11 +390,18 @@ describe('config-sync: computeRevision (stable serialization)', () => {
     assert.notEqual(r1, r2, 'changing apiKey must produce a different revision hash')
   })
 
-  test('2. same content, provider object key order irrelevant → revision unchanged', () => {
-    // stableSerialize sorts object keys, so field order within a provider must not matter
-    const r1 = computeRevision({ providers: [{ id: 'p1', apiKey: 'sk-1', baseURL: 'https://a.com', apiKeyEnv: 'P1_KEY', models: [] }] })
-    const r2 = computeRevision({ providers: [{ apiKeyEnv: 'P1_KEY', models: [], baseURL: 'https://a.com', id: 'p1', apiKey: 'sk-1' }] })
-    assert.equal(r1, r2, 'same content with different key order must produce same revision')
+  test('2. same content, provider order reversed → revision unchanged', () => {
+    const pa = { id: 'aaa', apiKey: 'sk-x', apiKeyEnv: 'AAA_KEY', baseURL: 'https://a.com', models: [{ id: 'm1', name: 'M1' }] }
+    const pz = { id: 'zzz', apiKey: 'sk-y', apiKeyEnv: 'ZZZ_KEY', baseURL: 'https://z.com', models: [{ id: 'm2', name: 'M2' }] }
+    const r1 = computeRevision({ providers: [pa, pz], defaultModel: 'aaa/m1' })
+    const r2 = computeRevision({ providers: [pz, pa], defaultModel: 'aaa/m1' })
+    assert.equal(r1, r2, 'reversed provider order must not change revision')
+    // 同时对象内 key 顺序也不影响
+    const r3 = computeRevision({ defaultModel: 'aaa/m1', providers: [{ models: pa.models, id: 'aaa', baseURL: pa.baseURL, apiKeyEnv: pa.apiKeyEnv, apiKey: pa.apiKey }, pz] })
+    assert.equal(r1, r3, 'object key order must not change revision')
+    // 防恒等函数自证：内容真变了必须不同
+    const r4 = computeRevision({ providers: [pa, { ...pz, apiKey: 'sk-changed' }], defaultModel: 'aaa/m1' })
+    assert.notEqual(r1, r4, 'different content must produce different revision')
   })
 
   test('3. add a model → revision must change', () => {
