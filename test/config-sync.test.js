@@ -510,3 +510,114 @@ describe('1A-8: stale revision check (=== not <=)', () => {
   })
 })
 
+describe('1A-10: mergePatch regex \\Z → $ fix', () => {
+  let tmp
+  beforeEach(() => { tmp = makeTmpHome() })
+  afterEach(() => { rmSync(tmp.dshHome, { recursive: true, force: true }); rmSync(tmp.profileDir, { recursive: true, force: true }) })
+
+  test('1A10-last-entry: llm-pi-ai is the last entry in patch (no trailing entry) → new provider must be written', () => {
+    // Set up patch with llm-pi-ai as the last entry (no following - id: line)
+    const initialPatch = `- id: remote-agent
+  name: "@deepseek-ai/dsh-remote-agent"
+  config:
+    nodes: []
+
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      old-provider:
+        apiKeyEnv: "OLD_KEY"
+        api: "openai-completions"
+        baseURL: "https://old.example.com/v1"
+        models:
+          - id: "old-model"
+            name: "Old Model"
+`
+    writeFileSync(join(tmp.profileDir, 'cordis.patch.yml'), initialPatch)
+    writeFileSync(join(tmp.dshHome, 'config-sync.json'), JSON.stringify({ appliedRevision: 0 }))
+
+    const result = handleConfigPush({
+      data: {
+        revision: 1,
+        providers: [{
+          id: 'piion',
+          baseURL: 'http://100.64.0.3:4387/gw/piion/v1',
+          apiKey: 'tok-piion',
+          apiKeyEnv: 'GATEWAY_TOKEN_piion',
+          models: [{ id: 'piion-fast', name: 'Piion Fast' }],
+        }],
+      },
+      dshHome: tmp.dshHome,
+      profileDir: tmp.profileDir,
+      e2e: true,
+      wasEncrypted: true,
+      send: () => {},
+      logger: () => {},
+      _restartFn: () => {},
+    })
+
+    assert.equal(result.ok, true, 'push must succeed')
+    const patchAfter = readFileSync(join(tmp.profileDir, 'cordis.patch.yml'), 'utf8')
+    assert.ok(patchAfter.includes('piion'), 'patch must contain new provider piion')
+    assert.ok(patchAfter.includes('GATEWAY_TOKEN_piion'), 'patch must contain new apiKeyEnv')
+    assert.ok(patchAfter.includes('http://100.64.0.3:4387/gw/piion/v1'), 'patch must contain new baseURL')
+    assert.ok(!patchAfter.includes('old-provider'), 'old provider must be replaced')
+    assert.equal(patchAfter.split('\n').filter(l => /^-\s*id:\s*llm-pi-ai\b/.test(l)).length, 1, 'exactly one llm-pi-ai entry must exist (replace not append)')
+  })
+
+  test('1A10-followed-entry: llm-pi-ai followed by agent-preset-registry → trailing entry preserved verbatim', () => {
+    const trailingEntry = `- id: agent-preset-registry
+  name: "@deepseek-ai/dsh-agent-preset-registry"
+  config:
+    presets: []
+`
+    const initialPatch = `- id: remote-agent
+  name: "@deepseek-ai/dsh-remote-agent"
+  config:
+    nodes: []
+
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      old-provider:
+        apiKeyEnv: "OLD_KEY"
+        api: "openai-completions"
+        models: []
+
+` + trailingEntry
+    writeFileSync(join(tmp.profileDir, 'cordis.patch.yml'), initialPatch)
+    writeFileSync(join(tmp.dshHome, 'config-sync.json'), JSON.stringify({ appliedRevision: 0 }))
+
+    const result = handleConfigPush({
+      data: {
+        revision: 1,
+        providers: [{
+          id: 'piion',
+          baseURL: 'http://100.64.0.3:4387/gw/piion/v1',
+          apiKey: 'tok-piion',
+          apiKeyEnv: 'GATEWAY_TOKEN_piion',
+          models: [{ id: 'piion-fast', name: 'Piion Fast' }],
+        }],
+      },
+      dshHome: tmp.dshHome,
+      profileDir: tmp.profileDir,
+      e2e: true,
+      wasEncrypted: true,
+      send: () => {},
+      logger: () => {},
+      _restartFn: () => {},
+    })
+
+    assert.equal(result.ok, true, 'push must succeed')
+    const patchAfter = readFileSync(join(tmp.profileDir, 'cordis.patch.yml'), 'utf8')
+    assert.ok(patchAfter.includes('piion'), 'patch must contain new provider piion')
+    assert.ok(patchAfter.includes('GATEWAY_TOKEN_piion'), 'patch must contain new apiKeyEnv')
+    // Trailing entry must be preserved verbatim
+    assert.ok(patchAfter.includes('agent-preset-registry'), 'trailing agent-preset-registry entry must be preserved')
+    assert.ok(patchAfter.includes('@deepseek-ai/dsh-agent-preset-registry'), 'trailing entry content must be preserved verbatim')
+    assert.equal(patchAfter.split('\n').filter(l => /^-\s*id:\s*llm-pi-ai\b/.test(l)).length, 1, 'exactly one llm-pi-ai entry must exist (replace not append)')
+  })
+})
+
