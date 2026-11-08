@@ -10,13 +10,17 @@ import { NodeRegistry } from '../lib/hub/node-registry.js'
 import { createConfigSync } from '../lib/hub/config-sync.js'
 import { computeRevision } from '../lib/hub/stable-hash.js'
 import { HUB_TO_NODE, NODE_TO_HUB, decodeFrame } from '../lib/protocol.js'
+import { E2E_MARKER } from '../lib/e2e.js'
 
 const PAYLOAD = () => ({
   providers: [{ id: 'alpha', api: 'openai-completions', apiKeyEnv: 'ALPHA_KEY', apiKey: 'sk-x', models: [{ id: 'm1', name: 'M1' }] }],
   defaultModel: 'alpha/m1',
 })
 
-function setup({ source, sendThrows = false } = {}) {
+// A stand-in for an established e2e session: NodeRegistry.send seals the frame body with it.
+const fakeE2E = () => ({ sealFrame: (_type, _id, d) => ({ e2e: E2E_MARKER, inner: d }) })
+
+function setup({ source, sendThrows = false, e2e = true } = {}) {
   const logs = []
   const wire = []
   const relay = {
@@ -28,17 +32,20 @@ function setup({ source, sendThrows = false } = {}) {
     },
   }
   const registry = new NodeRegistry({ log: (level, msg, meta) => logs.push({ level, msg, meta }), relay })
-  registry.nodes.set('n1', { nodeId: 'n1', online: true, lastSeen: 0 })
+  registry.nodes.set('n1', { nodeId: 'n1', online: true, lastSeen: 0, ...(e2e ? { e2e: fakeE2E() } : {}) })
   const sync = createConfigSync({ registry, source, log: (level, msg, meta) => logs.push({ level, msg, meta }) })
   // exactly the wiring in lib/hub/index.js
   registry.on('configSyncRequest', ev => sync.handleSyncRequest(ev))
   const request = (appliedRevision) => registry.handleFrameFor('n1', { t: NODE_TO_HUB.CONFIG_SYNC_REQUEST, d: { appliedRevision } })
+  // the frames as the node would open them (the e2e body unwrapped)
   const frames = () => wire.map((w) => {
     const decoded = decodeFrame(w.text)
     assert.equal(decoded.ok, true, 'frame decodes: ' + JSON.stringify(decoded))
-    return decoded.frame
+    const frame = decoded.frame
+    return frame.d?.e2e === E2E_MARKER ? { ...frame, d: frame.d.inner } : frame
   })
-  return { registry, sync, logs, wire, request, frames }
+  const clearFrames = () => wire.filter(w => decodeFrame(w.text).frame?.d?.e2e !== E2E_MARKER)
+  return { registry, sync, logs, wire, request, frames, clearFrames }
 }
 
 test('1. appliedRevision=0 → exactly one config-push frame, payload.revision = computeRevision(payload)', () => {
@@ -90,7 +97,7 @@ test('5. registry.send throws → not thrown out, warn logged', () => {
 
 test('6. registry.send returns false (node not reachable) → warn, not a silent success', () => {
   const logs = []
-  const sync = createConfigSync({ registry: { send: () => false }, source: PAYLOAD, log: (l, m, meta) => logs.push({ level: l, msg: m, meta }) })
+  const sync = createConfigSync({ registry: { send: () => false, hasE2E: () => true }, source: PAYLOAD, log: (l, m, meta) => logs.push({ level: l, msg: m, meta }) })
   assert.equal(sync.sendPush('n1'), false)
   assert.ok(logs.some(l => l.level === 'warn' && /not delivered/.test(l.msg)))
 })
@@ -118,4 +125,43 @@ test('9. the keys travel in the frame but never in a log line', () => {
   const { request, logs } = setup({ source: PAYLOAD })
   request(0)
   assert.equal(JSON.stringify(logs).includes('sk-x'), false)
+})
+
+test('10. node without an e2e session → no frame at all, no throw, a warn (the payload carries apiKey)', () => {
+  const { sync, request, wire, logs } = setup({ source: PAYLOAD, e2e: false })
+  assert.doesNotThrow(() => request(0))
+  assert.equal(wire.length, 0, 'nothing went out, not even clear text: ' + JSON.stringify(wire))
+  assert.equal(sync.sendPush('n1'), false)
+  assert.equal(wire.length, 0)
+  const warn = logs.find(l => l.level === 'warn' && /no e2e session/.test(l.msg))
+  assert.ok(warn, 'a warn was logged: ' + JSON.stringify(logs))
+  assert.equal(warn.meta.nodeId, 'n1')
+  assert.equal(JSON.stringify(logs).includes('sk-x'), false, 'no key in the log')
+})
+
+test('11. node with an e2e session → one frame, its body sealed (never clear text)', () => {
+  const { request, wire, frames, clearFrames } = setup({ source: PAYLOAD })
+  request(0)
+  assert.equal(wire.length, 1)
+  assert.equal(clearFrames().length, 0, 'the body went out sealed')
+  assert.equal(frames()[0].t, HUB_TO_NODE.CONFIG_PUSH)
+})
+
+test('12. NodeRegistry.hasE2E: true only for a known node with a session', () => {
+  const registry = new NodeRegistry({ log: () => {} })
+  registry.nodes.set('with', { nodeId: 'with', e2e: fakeE2E() })
+  registry.nodes.set('without', { nodeId: 'without' })
+  assert.equal(registry.hasE2E('with'), true)
+  assert.equal(registry.hasE2E('without'), false)
+  assert.equal(registry.hasE2E('unknown'), false)
+  assert.equal(registry.hasE2E(undefined), false)
+})
+
+test('13. a registry with no hasE2E at all is treated as no session (fail closed)', () => {
+  const logs = []
+  let sent = 0
+  const sync = createConfigSync({ registry: { send: () => { sent += 1; return true } }, source: PAYLOAD, log: (l, m) => logs.push({ level: l, msg: m }) })
+  assert.equal(sync.sendPush('n1'), false)
+  assert.equal(sent, 0)
+  assert.ok(logs.some(l => l.level === 'warn' && /no e2e session/.test(l.msg)))
 })
