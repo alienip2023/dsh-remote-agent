@@ -227,10 +227,15 @@ test('1A4-legacy: state file without schema:2 → shouldRestart=true + legacy-fi
   const profileDir = join(dshHome, 'profiles', 'web')
   mkdirSync(profileDir, { recursive: true })
   const noRestart = () => {}
-  // Write pre-v2 state file (no schema field)
+  // Write pre-v2 state file (no schema field) — fingerprint matches the incoming payload exactly,
+  // so only isLegacyState (missing schema:2) can trigger restart, not a fingerprint diff.
+  const { createHash: CH } = await import('node:crypto')
+  const kd = CH('sha256').update('sk-1').digest('hex').slice(0, 16)
   writeFileSync(
     join(dshHome, 'config-sync.json'),
-    JSON.stringify({ appliedRevision: 1, lastPayload: { providers: [{ id: 'p1' }] } }, null, 2) + '\n',
+    JSON.stringify({ appliedRevision: 1, lastPayload: { providers: [
+      { id: 'p1', baseURL: 'https://api.test.com/v1', apiKeyEnv: 'P1_KEY', keyDigest: kd },
+    ] } }, null, 2) + '\n',
     { mode: 0o600 }
   )
   const logs = []
