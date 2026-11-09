@@ -9,6 +9,27 @@
 
 ---
 
+## [0.10.1-fork.56] - 2026-11-09
+
+配置落盘校验器的三处缺口（真实 DSH 加载器冒烟）+ 验收官 Q0。
+
+- **B1 `- insert:` 不再让整次推送被拒**：`validatePatchYaml` 不再要求每个顶层条目都有 `id:`。DSH loader 认 `- insert: [...]`，
+  也只对「无 id 的非 insert 条目」告警跳过——这些不是我们管的条目，原样保留。仍然拒收的：非数组、纯标量条目（`- foo`，loader 要求映射）、
+  引号没闭合（截断）、`[]` 与块条目混用。
+- **B2 结果必须是 loader 认的顶层数组**：DSH 新 profile 的模板是 `# 注释…` + `[]`（旧版校验器会把它当非法、追加条目后也会写出 `[]` 后跟 `- id:` 的非法 YAML）。
+  现在接受 `[]`，追加条目前去掉它；合并结果若没有任何条目（全部撤销后只剩注释）补回 `[]`，注释保留；落盘前 `checkMergedPatch`
+  多一道 `patch-not-array`。纯注释 / 空文件 loader 会拒绝启动（`must be a top-level YAML array`）。
+- **B3 撤销后不留空壳**：`llm-pi-ai` 条目与插件条目走同一套所有权：同步新建的 → 撤销时删；节点手写后被接管的 → 不删（也不写 `providers: null`，
+  载荷没有 provider 时根本不写这个条目）；fork.54/55 留下的空壳（`providers:` 下无任何 provider）顺手清掉；fork.54/55 的状态文件没有
+  `adoptedEntries`，当时 llm-pi-ai 一律由同步写入，视为同步所有。
+- **Q0 已接管的条目第二次推送不再覆盖备份**：`config-sync.json` 新增 `adoptedEntries`；后续推送遇到状态里已有的 id，不重写备份、不再回执
+  `adoptedEntries`、仍不算 owned；撤销时不删、只忘掉接管记录；再次接管同一 id 不覆盖旧备份（另存 `adopted-<id>-r<revision>.yml`）。
+  旧状态没有该字段按空处理。备份写失败整次回滚（补了测试）。
+- 已知限制：条目 `id:` 不在条目第一行（`- name: x\n  id: llm-deepseek`）时 `findEntryRange` 找不到，会追加一条重复的；整份 patch 写成流式数组
+  （`[{...}]`）不支持合并，按 `patch-existing-invalid` 拒收。
+
+---
+
 ## [0.10.1-fork.55] - 2026-11-09
 
 P1b-2 前置收尾（验收官三条）。

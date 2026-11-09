@@ -263,7 +263,9 @@ describe('P1b-1 truncated / illegal YAML never reaches disk', () => {
   test('P1b1-validate-unit: validatePatchYaml names the line of a cut-off string and accepts a healthy file', () => {
     assert.equal(validatePatchYaml(OTHER_ENTRIES), null)
     assert.deepEqual(validatePatchYaml('- id: a\n  name: "@deep'), { code: 'patch-invalid', line: 2 })
-    assert.deepEqual(validatePatchYaml('- name: no-id\n'), { code: 'patch-invalid', line: 1 })
+    // fork.56 (B1): an entry without `id:` is a legal loader form (insert / warned-and-skipped), not a truncation.
+    assert.equal(validatePatchYaml('- name: no-id\n'), null)
+    assert.deepEqual(validatePatchYaml('- foo\n'), { code: 'patch-invalid', line: 1 }, 'a bare scalar is not a mapping')
     assert.equal(validatePatchYaml(''), null)
   })
 })
@@ -354,7 +356,7 @@ describe('P1b-1 ownedRefs: the hub can revoke what it pushed, and never touches 
     assert.equal(result.ok, true)
     const state = JSON.parse(readFileSync(home.state, 'utf-8'))
     assert.deepEqual(state.ownedRefs, ['DEEPSEEK_API_KEY'], 'JINA_API_KEY already existed on the node → not owned')
-    assert.deepEqual(state.ownedEntries, ['llm-deepseek'])
+    assert.deepEqual(state.ownedEntries, ['llm-deepseek', 'llm-pi-ai'], 'the push created both entries (fork.56: llm-pi-ai follows the same ownership rule)')
     assert.equal(refsOf().JINA_API_KEY, PI_KEY, 'value was overwritten by the push (same as before this slice)')
   })
 
