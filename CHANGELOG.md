@@ -9,6 +9,22 @@
 
 ---
 
+## [0.10.1-fork.58] - 2026-11-10
+
+`remote-agent:node-policy`（副机里 ra 交给 ds-bot 的本机策略服务）除 `roots` 外再带 `nodeId`：
+
+- 值是节点配置里的 nodeId，经 `sanitizeNodeId`，与帧里、hello 里用的是同一个（没配时是清洗后的主机名）。
+  ds-bot 的环境感知（host-context，fork.73）据此写出 `Node: <nodeId> (hostname …)`；没有它时只写 `Node: hostname …`。
+- 两个字段都只读：服务对象和 `roots` 都是冻结的，且 `roots` 是拷贝，不是 `resolveRoots` 返回的那份数组，读它的人改不动节点自己的边界。
+- 旧调用方只读 `policy.roots`（ds-bot 的 `checkWorkDirRoots` 等）不受影响：形状仍是 `{ roots: string[] }` 多一个字段。
+- 已有同名服务时仍不重复注册（与之前一致）。
+- 更正一条日志：`roots` 为空时服务**仍会注册**（`{ roots: [], nodeId }`），ds-bot 侧所有 workDir 校验会拒绝；
+  旧日志写的是「不会注册」，与代码不符。`roots` 只在没配 roots 且连默认目录（`~/dsh-remote-work`）都算不出来时才为空。
+
+测试：`test/node-policy-nodeid.test.js`（7 条）；刀见提交说明。
+
+---
+
 ## [0.10.1-fork.57] - 2026-11-09
 
 fork.56 验收官建议的三项（节点配置落盘）。
