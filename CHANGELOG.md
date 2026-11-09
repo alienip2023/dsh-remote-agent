@@ -9,6 +9,21 @@
 
 ---
 
+## [0.10.1-fork.54] - 2026-11-09
+
+P1b-1 模型配置同步第一片（节点侧）。
+
+- `lib/node/config-managed.js`（新）：`plugins[]` 白名单（本片只有 `llm-deepseek`）、字段/类型校验（与插件 schema 一致）、
+  `replaceManagedEntry`（只替换主控托管的条目，其它条目与注释逐字节保留）、`validatePatchYaml`、`checkMergedPatch`。
+- `lib/node/config-sync.js`：schema:2 载荷；不在白名单的插件 → 回执 `plugin-not-allowed`，配置非法 → `plugin-config-invalid`（都在写盘之前）；
+  凭据所有权 `ownedRefs` / `ownedEntries`（主控撤销 → 节点删除，节点自配的永不动）；现有 patch 截断/非法 → `patch-existing-invalid`；
+  写盘后回读核对，不一致就恢复快照（原本不存在的文件会被删掉，状态文件整体还原）；回执带 `schema:2`。
+- `lib/node/index.js`：hello `caps` 增加 `config-sync/2`。
+- 行为不变：不带 `schema:2` 的载荷（v1）与以前完全一致；`shouldRestart` 的判定只多了插件指纹与「撤销了 ref」。
+- 热生效探针见 `docs/p1b1-hot-reload-probe.md`：只换/撤销 key 无需重启（实测约 130ms）。
+
+---
+
 ## [0.10.1] - 2026-11-02
 
 ### 🔴 修复：0.10.0 装进 profile 后整个插件不激活
