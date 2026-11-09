@@ -9,6 +9,21 @@
 
 ---
 
+## [0.10.1-fork.55] - 2026-11-09
+
+P1b-2 前置收尾（验收官三条）。
+
+- **重启不再拖垮节点**：`scheduleRestart` 给 `spawn('systemctl')` 的子进程挂了 `'error'` 监听（macOS / Windows / 容器里没有 systemctl 时，
+  Node 在子进程对象上发 `'error'`，无人监听就是未处理事件、进程 exit 1，`e0c97ea` 起就有）。回执在需要重启时带 `restartMode`：
+  systemd → `'systemd'`（节点 300ms 后自己重启，同以前）；其它 → `'manual'`（不 spawn，界面提示手动重启节点 DSH）。
+- **credentials 建文件即 0600**：`atomicWriteSecure` 的临时文件用 `{ mode: 0o600 }` 创建，不再「先 0644 写入密钥、再 chmod」。
+- **手写条目与 ref 同一条所有权规则**：节点上本来就有的 `llm-deepseek` 条目，首次推送仍被主控内容替换，但**不记为同步所有**：
+  撤销时不删；接管前的原文另存为 `config-sync.bak/adopted-llm-deepseek.yml`（0600，存不下就整次回滚），回执带 `adoptedEntries`。
+  选这个而不是「首次接管前存快照、撤销时照删」的理由：ref 早就是「覆盖值、仍归节点、撤销不删」，条目照同一条规则最不意外，
+  且永远不会因为一次撤销把节点自己写的配置删掉；代价是撤销后留下一条主控内容的条目，需要人清理（原文在 adopted-*.yml）。
+
+---
+
 ## [0.10.1-fork.54] - 2026-11-09
 
 P1b-1 模型配置同步第一片（节点侧）。
