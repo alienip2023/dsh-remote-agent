@@ -9,6 +9,26 @@
 
 ---
 
+## [0.10.1-fork.61] - 2026-11-10
+
+节点重启后连中继被 `duplicate-node` 拒、之后永久沉默的修复（环境管家证据 e-node-relay-drop-20261110）。
+
+### 修复
+- `lib/node/transport.js`：`duplicate-node` 不再当致命错误。节点重启时中继还留着旧进程的记录（旧连接的 close 晚到几秒），
+  新连接因此被拒——这是几秒内自愈的竞态。现在按指数退避重连（默认 1s/2s/4s/8s/16s，之后封顶 16s，含最多 20% 抖动），
+  累计计划等待超过 120s（约 10 次）才按原样 `stop()`，错误文案 `relay error: duplicate-node …` 不变。
+  上线（`markOnline`）即清零计数与预算。其它致命码（`node-id-invalid` / `unauthorized` / `revoked`）行为不变，仍立即停止。
+- 配置 `duplicateRetry: { baseMs, maxMs, totalMs }`（可选）；字段非有限正数（含字符串数字）回退默认，`maxMs` 不小于 `baseMs`，`totalMs` 上限 1 小时。
+
+### 新增
+- `lib/node/lifecycle-console.js`：online / offline / reconnecting（含 attempt、delayMs，duplicate 重试带 `reason=duplicate-node`）/ fatal
+  四类事件额外写一行 stderr，形如 `[dsh-remote-agent] node=<id> event=reconnecting attempt=2 delayMs=2043 reason=duplicate-node`。
+  只含清洗后的节点 id、事件名、数字、白名单短码；不含 token、URL、查询串、中继消息正文。`ctx.logger` 行为不变。
+- transport 新事件 `fatal`（`{ code, attempts }`）。
+
+### 已知、未处理
+- 中继 VPS 运行 fork.39，节点 fork.60，版本错配，另行升级。
+
 ## [0.10.1-fork.60] - 2026-11-10
 
 收口 fork.59 验收指出的两处（只改这两处，不扩范围）。
