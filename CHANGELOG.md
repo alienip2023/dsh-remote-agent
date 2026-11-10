@@ -9,6 +9,18 @@
 
 ---
 
+## [0.10.1-fork.65] — 2026-11-10
+
+### Added
+- **s57-B：删除 joined Bot 传播到节点（bot/delete）**：主控删除 joined Bot 后，向节点发 `bot/delete` 帧请求节点执行本地删除；失败保留 tombstone 并记 warn，不阻塞主控侧删除（`ds-bot/src/host/roster.js`, `joined-page.js`）。
+  - `lib/protocol.js`：新增 `HUB_TO_NODE.BOT_DELETE='bot/delete'`、`NODE_TO_HUB.BOT_DELETE_RESULT='bot/delete-result'`、`validateBotDelete`、`validateBotDeleteResult`。
+  - `lib/bot-delete.js`（新文件）：`handleBotDeleteFrame` 路由到 `remote-agent:bot-delete` 接收方并回送结果。
+  - `lib/node/dispatch.js`：分发 `HUB_TO_NODE.BOT_DELETE`。
+  - `lib/hub/registry-ingest.js`：收入 `NODE_TO_HUB.BOT_DELETE_RESULT` 并 emit `botDeleteResult`。
+- **applyRosterReport 缺失标记**：从同一节点上报的 roster 中不再出现的 joined bot，worker 会被标记 `missingFromReport:true`（不自动删除，让 UI 可以提示用户手动删除）（`ds-bot/src/host/roster-join.js`）。
+
+---
+
 ## [0.10.1-fork.64] — 2026-11-10
 
 ### Fixed
