@@ -9,6 +9,14 @@
 
 ---
 
+## [0.10.1-fork.64] — 2026-11-10
+
+### Fixed
+- **迟到 ACK 不再杀链路（s56）**：`handleE2EAck` 把最近若干个 offer（有界队列 ≤4，TTL 60s）存入 `recentOffers`；ACK 到达时先试当前 offer，再按 nonce 检索历史：迟到匹配 = warn + 丢弃（不 fatal）；无匹配（伪造帧）= warn + 丢弃（不 fatal，fatal 等于给中继一个单帧 DoS）；仅 `e2e-identity`（无 identityPeer）保持 fatal，语义不变。
+  - 补充：`e2eOffer` 为空时不再直接 return，而是在 `recentOffers` 里检索迟到的 ACK 并发出 warn（覆盖 offer2 ACK 已处理、offer1 ACK 才到的场景）。
+
+---
+
 ## [0.10.1-fork.63] — 2026-11-10
 
 ### Added
