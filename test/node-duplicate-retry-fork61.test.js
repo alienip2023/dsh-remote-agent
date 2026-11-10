@@ -86,16 +86,16 @@ const FAST = { baseMs: 30, maxMs: 60, totalMs: 200 }
 
 /* ───────── defaults, config fallback (pure behaviour of the exported helpers) ───────── */
 
-test('D61-schedule: default backoff is 1s/2s/4s/8s/16s then capped, within a ~2 minute budget', () => {
+test('D61-schedule: default backoff is 1s/2s/4s/8s/16s then capped, within a ~10 minute budget (fork.62)', () => {
   const cfg = resolveDuplicateRetry(undefined)
   assert.deepEqual(cfg, DUPLICATE_RETRY_DEFAULTS)
   assert.deepEqual([1, 2, 3, 4, 5, 6, 7].map((n) => duplicateBackoffMs(n, cfg)), [1000, 2000, 4000, 8000, 16000, 16000, 16000])
   let n = 0
   let spent = 0
   while (spent + duplicateBackoffMs(n + 1, cfg) <= cfg.totalMs) { n += 1; spent += duplicateBackoffMs(n, cfg) }
-  assert.equal(cfg.totalMs, 120000)
-  assert.equal(n, 10)
-  assert.ok(spent <= 120000 && spent >= 100000, `spent ${spent}`)
+  assert.equal(cfg.totalMs, 600000)
+  assert.equal(n, 40)
+  assert.ok(spent <= 600000 && spent >= 580000, `spent ${spent}`)
 })
 
 test('D61-config: valid overrides are honoured, every invalid field falls back to its default', () => {

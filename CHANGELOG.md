@@ -9,6 +9,21 @@
 
 ---
 
+## [0.10.1-fork.62] - 2026-11-10
+
+收口 fork.61 验收官留下的两项（加一处小补）。
+
+### 修复
+- `lib/node/lifecycle-console.js`：默认 stderr 写入给 `process.stderr` 挂一次空 `'error'` 监听（标记在流对象上，只挂一次；不碰 stdout）。
+  stderr 管道读端关闭后的 `write EPIPE` 是异步 `'error'` 事件，try/catch 接不住，没有监听就是未捕获异常，会把节点进程带崩。
+- `lib/node/transport.js`：`duplicate-node` 默认重试预算 `totalMs` 120s → 600s（上限仍 1 小时、`maxMs` 仍 16s、配置覆盖与非法值回退不变）。
+  中继对没有 FIN 的旧连接靠空闲淘汰清记录：空闲 3min 发 ping、再等 3min、再加 1min 扫描间隔，最坏约 7 分钟；120s 预算会在旧记录消失前 fatal。
+  默认节奏仍是 1s/2s/4s/8s/16s 然后 16s 一次，约 40 次重连。
+
+### 新增
+- `fatal` 事件补两处：hub 身份验证失败（`failHubIdentity`，含宽限超时与 E2E 验签失败）发 `code: 'hub-identity'`；
+  收到 `hub/e2e` 但 hub 身份未验证发 `code: 'e2e-identity'`。两个码在 stderr 行白名单里，不带 reason 或指纹等细节；原有 error 文案不变。
+
 ## [0.10.1-fork.61] - 2026-11-10
 
 节点重启后连中继被 `duplicate-node` 拒、之后永久沉默的修复（环境管家证据 e-node-relay-drop-20261110）。
