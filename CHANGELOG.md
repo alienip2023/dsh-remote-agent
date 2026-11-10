@@ -9,6 +9,19 @@
 
 ---
 
+## [0.10.1-fork.60] - 2026-11-10
+
+收口 fork.59 验收指出的两处（只改这两处，不扩范围）。
+
+### 修复
+- **config-sync：flow 集合里折行引号项之后的截断不再被放行。** `scanPatch` 的引号续行分支在闭合引号之后继续扫行内余下部分，但没把返回的「下一个位置是不是标量起始」写回 `lex.carry`；于是 `l: ["aa\n  bb",\n  "cc\n  dd` 这种「flow 里第一项折行并以 `,` 结尾、截断落在第二个折行引号项里」的文件被判合法（真 loader：`within a double quoted scalar`）。现在写回。验证：`yaml` 包以 80/40/20/0/120/60 列重序列化真实形状 patch，并以真实 `loadOptionalPatches` 判定的差分 fuzz。
+- **hub：`configAck` 事件的 `nodeId` 以已鉴权的节点为准。** `registry-ingest` 原来是 `{ nodeId, ...d }`，节点帧里的同名字段会覆盖真实 nodeId（已鉴权节点可冒名，长度不限；fork.59 的回执日志监听器会把它写进日志）。现在是 `{ ...d, nodeId }`。
+
+### 已知、未改（待定）
+- 同文件里 `roster`（`reportedId`，自 fork.33 起有意取节点自报的 id）以及 `botTurnResult` 经 `validateBotTurnResult` 带出的 `nodeId` 也取节点帧里的值；它们不是展开顺序问题，是有意设计，改动会影响 ds-bot 的匹配，留给负责人决定。
+
+---
+
 ## [0.10.1-fork.59] - 2026-11-10
 
 ### 修复
