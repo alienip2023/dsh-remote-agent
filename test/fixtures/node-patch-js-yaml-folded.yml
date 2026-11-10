@@ -1,0 +1,150 @@
+# 副机（worker）补丁层：只保留 remote-agent 一条，其余沿用 bundle 默认。
+- id: remote-agent
+  name: dsh-remote-agent
+  inject: [ 'tools', 'agentLoop', 'sessions' ]
+  config:
+    role: worker
+    transportMode: relay
+    relayUrl: 'ws://relay.example:8890/relay'
+    nodeId: dshtest-1
+    roots: [ '/root/work' ]
+    agentMode: true
+
+# 2026-11-08 司令诊断：DSH 0.2.2-alpha.2 的 agent-preset-registry 与 cordis 4.0.6-alpha.2 不兼容
+# （leakedServices 读 impl.fiber，实际 impl 只有 ctx.fiber）→ 任何 session 创建都抛 parent TypeError。
+# worker 无头运行 Bot，不需要 agent preset，关掉让 composeAgent 走无 preset 分支。
+- id: agent-preset-registry
+  disabled: true
+
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      xai:
+        apiKeyEnv: "XAI_API_KEY"
+        api: "openai-responses"
+        baseURL: "https://api.x.ai/v1"
+        models:
+          - id: "grok-4.3"
+            name: "Grok 4.3"
+          - id: "grok-4.5"
+            name: "Grok 4.5"
+          - id: "grok-4.6"
+            name: "Grok 4.6"
+          - id: "grok-4.7"
+            name: "Grok 4.7"
+      piion:
+        apiKeyEnv: "GATEWAY_TOKEN_dshtest_1"
+        api: "openai-completions"
+        baseURL: "http://hub.example:4387/gw/piion/v1"
+        models:
+          - id: "/Users/example/.lmstudio/models/vendorxx/Qwen3.6-35B-A3B-Uncensored-Hereti\
+              c-MLX-4bit"
+            name: "Qwen3.6 35B-A3B"
+      jina:
+        apiKeyEnv: "JINA_API_KEY"
+        api: "openai-completions"
+        baseURL: "https://api.jina.ai/v1"
+        models:
+          - id: "jina-ai/jina-embeddings-v5-text-small"
+            name: "Jina AI: Jina Embeddings v5 Text Small"
+          - id: "jina-ai/jina-embeddings-v5-omni-small"
+            name: "Jina AI: Jina Embeddings v5 Omni Small"
+      siliconflow:
+        apiKeyEnv: "SILICONFLOW_API_KEY"
+        api: "openai-completions"
+        baseURL: "https://api.siliconflow.cn/v1"
+        models:
+          - id: "deepseek-ai/DeepSeek-V4.1-Flash"
+            name: "deepseek-ai/DeepSeek-V4.1-Flash"
+          - id: "zai-org/GLM-5.3-Flash"
+            name: "zai-org/GLM-5.3-Flash"
+          - id: "deepseek-ai/DeepSeek-V4-Pro"
+            name: "deepseek-ai/DeepSeek-V4-Pro"
+          - id: "inclusionAI/Ling-mini-2.0"
+            name: "inclusionAI/Ling-mini-2.0"
+      ccmax:
+        apiKeyEnv: "CCMAX_API_KEY"
+        api: "anthropic-messages"
+        baseURL: "https://omini.ominiapi.top"
+        models:
+          - id: "claude-fable-5-1"
+            name: "claude-fable-5-1"
+          - id: "claude-sonnet-5-5"
+            name: "claude-sonnet-5-5"
+          - id: "claude-haiku-5-5"
+            name: "claude-haiku-5-5"
+          - id: "claude-opus-5-5"
+            name: "claude-opus-5-5"
+          - id: "claude-opus-4-6"
+            name: "claude-opus-4-6"
+          - id: "claude-opus-4-7"
+            name: "claude-opus-4-7"
+          - id: "claude-opus-4-8"
+            name: "claude-opus-4-8"
+          - id: "claude-opus-5"
+            name: "claude-opus-5"
+          - id: "claude-sonnet-4-6"
+            name: "claude-sonnet-4-6"
+          - id: "claude-sonnet-5"
+            name: "claude-sonnet-5"
+
+- id: llm-deepseek
+  name: "@deepseek-ai/dsh-llm-deepseek-api-key"
+  config:
+    maxTokens: 384000
+    defaultContextWindow: 1000000
+    streamIdleTimeoutMs: 300000
+    models:
+      - id: "deepseek-flash"
+        name: "DeepSeek-V4.1-Flash"
+        contextWindow: 1000000
+        inputModalities:
+          - "text"
+          - "image"
+        systemPromptUpdate: "in-history"
+        toolUpdate: "addition-only"
+      - id: "deepseek-v4-pro"
+        name: "DeepSeek-V4-Pro"
+        description: "Stronger agentic coding, knowledge, and difficult reasoning;
+          suited to complex or quality-critical tasks at higher cost."
+        contextWindow: 1000000
+        inputModalities:
+          - "text"
+
+# ── N-2 探针（2026-11-10）──────────────────────────────────────────────────
+# 无 agent preset 的宿主层上重新启用核心工具；并把默认权限钉成无人值守预设。
+# permission 行：补丁替换整段 config，故必须重述 read-only / workspace-write /
+# danger-full-access 三项，再加 node-unattended。回滚见
+# cordis.patch.yml.bak-n2-20261110（sha256 31b596a79e3bc210d32ec9a46a54b9278636e26be6b14139dda706cf427860b0）。
+- id: tool-bash
+  disabled: false
+
+- id: tool-jobs
+  disabled: false
+
+- id: tool-fs
+  disabled: false
+
+- id: tool-fs-search
+  disabled: false
+  config:
+    sampleOverCapGlobResults: false
+
+- id: permission
+  name: '@deepseek-ai/dsh-permission-presets'
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+      node-unattended:
+        sandbox: workspace-write
+        approval: never
+    defaultPreset: node-unattended

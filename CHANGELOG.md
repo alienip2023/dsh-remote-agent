@@ -9,6 +9,21 @@
 
 ---
 
+## [0.10.1-fork.59] - 2026-11-10
+
+### 修复
+- **config-sync：节点 patch 里合法的 YAML 折行不再被当成「文件被截断」。** 之前 `validatePatchYaml` 把「双引号在行尾没闭合」一律判 `patch-invalid`（fork.54 起），而 DSH 插件管理器（`dsh-plugin-manager` 的 `writePluginEnabled`：`yaml` 包 `parseDocument` → `String(document)`）每次启停插件都会整份重写 `cordis.patch.yml`，把长字符串折行、用 `\` 续行。结果：一旦节点上有人启停过插件，之后每次推送都在合并前以 `patch-existing-invalid` 被拒，节点配置再也不更新（s44：xai 一直直连）。
+  现在 `config-managed.js` 的行扫描带跨行状态：双引号 / 单引号标量折行、`\` 续行、`''` 转义、块标量（`|` `>`）正文、纯文本折行续行、多行 flow 集合都按 js-yaml 的规则读；只有**到文件末尾仍未闭合**的引号才算截断（报告的行号是引号打开的那一行）。文档标记不能出现在引号里。
+  验证：用 js-yaml `dump` 和插件管理器同款的 `yaml` 包生成折行文档做差分 fuzz（合法 → 放行；随机截断且 js-yaml 报 `within a … quoted scalar` → 拒绝），再加节点 patch 的脱敏副本（`test/fixtures/node-patch-js-yaml-folded.yml`）：原样推送 xai 直连和网关化两种载荷都成功。
+  已知边界：多行的 flow 映射键、`? ` 复杂键、自定义 tag 里的折行不做校验（宁可放行，由 DSH 的 loader 在启动时把关）；纯文本标量续行靠缩进判断，续行开头的 `"` 当文本。
+- **hub 记录节点的配置回执。** 之前 `registry-ingest` 发出 `configAck`，没有任何监听：节点拒收推送（patch 非法、写盘失败…）在主控侧完全不可见。现在 `lib/hub/config-sync.js` 监听它：拒收是一条 warn（`config-sync: node rejected config`，字段只有 `nodeId`、被拒的 `revision`（hub 记着最后推给该节点的版本）、错误码），应用成功是一条 info；错误码只取 `code[: detail]` 的 code 部分，detail、字段路径、URL、key 一概不进日志。
+
+### 不变
+- 受管条目 / adopted 备份 / ownedRefs 的行为不变：这些都按条目 `id` 文本定位，插件管理器重写后 id 不变；下一次推送用 `replaceManagedEntry` 整条替换受管条目（回到单行 JSON 引号风格），不受折行影响。
+- 拒绝真截断的用例（`truncated-existing`、`not-a-list` 等）不放松。
+
+---
+
 ## [0.10.1-fork.58] - 2026-11-10
 
 `remote-agent:node-policy`（副机里 ra 交给 ds-bot 的本机策略服务）除 `roots` 外再带 `nodeId`：
