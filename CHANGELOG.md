@@ -9,6 +9,17 @@
 
 ---
 
+## [0.10.1-fork.63] — 2026-11-10
+
+### Added
+- **e2e 自愈（s55）**：主控重开后 e2e 加密会话自动恢复，无需重启节点。
+  - `lib/hub/e2e-heal.js`：退避参数 `E2E_HEAL_DEFAULTS`（2/4/8/16/30s，上限 10 次，每节点独立计数）。
+  - Hub（`lib/hub/registry-handshake.js`）：节点上线但无会话时，主动按退避发 `E2E_RESET`；会话建成或节点下线后停止；下线清定时器；重连重新计数；重复收到节点目录不重置退避（H1）。
+  - Hub（`lib/hub/registry-ingest.js`）：解不开的帧每节点至少间隔 5s 发一次 `E2E_RESET`，不再只丢帧（H2）。
+  - Node（`lib/node/transport.js`）：收到带 e2e 标记但无会话的帧时，限速地重新提议而不是只丢帧（N1）；提议超时后按 30/60/120/240s 退避重试，封顶 5min，不再永远停在明文（N2）。
+  - Node（`lib/node/lifecycle-console.js`）：e2e 事件（established/offer/reset/timeout）写入 stderr，systemd journal 可见，不含任何密钥材料。
+- 测试：`test/e2e-heal-fork63.test.js`（16 条，真实 relay + hub + NodeTransport，24 把刀，全红）。
+
 ## [0.10.1-fork.62] - 2026-11-10
 
 收口 fork.61 验收官留下的两项（加一处小补）。
