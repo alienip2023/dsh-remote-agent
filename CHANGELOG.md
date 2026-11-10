@@ -9,6 +9,11 @@
 
 ---
 
+## [0.10.1-fork.67] — 2026-11-10
+
+### Added
+- **P1b-1：joined Bot 模型切换**：RESOURCE 帧的模型条目加 `efforts[]`（来自 `llm.listModels` 的 `reasoningEfforts`）；`remote-agent:node-policy` 增加非枚举 getter `models`（实时返回当前缓存的模型清单）供主控侧 `createBotUpdateReceiver` 精确校验 model ref；测试覆盖：`readAvailableModels` efforts 透传与截断、policy getter 存在且不影响 `JSON.stringify` 形状、`handleBotUpdateFrame` 分发成功/未知模型/无接收方三种路径（`test/model-switch-p1b1.test.js`）。
+
 ## [0.10.1-fork.66] — 2026-11-10
 
 ### Added
