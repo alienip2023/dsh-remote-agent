@@ -9,6 +9,11 @@
 
 ---
 
+## [0.10.1-fork.66] — 2026-11-10
+
+### Added
+- **s59：bot/delete 盲区测试**：补 `validateBotDelete` 缺字段拒绝（nodeId/remoteBotId/requestId 各一）、dispatch ok/fail 两种回执、`validateBotDeleteResult` 校验 round-trip（`test/bot-delete.test.js`）。
+
 ## [0.10.1-fork.65] — 2026-11-10
 
 ### Added
