@@ -81,6 +81,23 @@ test('M1-efforts-knife-fields: truncates effort id/name to max lengths', async (
 
 // ── M2: node-policy models getter ─────────────────────────────────────────────
 
+test('M1-efforts-blank-id: empty or blank effort ids are dropped at the node', async () => {
+  // Knife: drop .trim() before the empty check → "   " survives → RED
+  const { readAvailableModels } = await import('../lib/node/model-catalog.js')
+  const fakeCtx = {
+    get: (name) => name === 'llm' ? {
+      listProviders: () => [{ id: 'p' }],
+      listModels: async () => [{
+        id: 'm1', name: 'M1',
+        reasoningEfforts: [{ id: '', name: 'empty' }, { id: '   ', name: 'blank' }, { id: 'ok', name: 'OK' }],
+      }],
+      listConfigurableProviders: () => [],
+    } : undefined,
+  }
+  const result = await readAvailableModels(fakeCtx)
+  assert.deepEqual(result.models[0].efforts, [{ id: 'ok', name: 'OK' }], 'only a non-blank id is a level')
+})
+
 test('M2-policy-models-getter: node-policy exposes models via live getter', (t) => {
   // Knife: remove Object.defineProperty getter → policy.models === undefined → RED
   const dir = tmpDir()

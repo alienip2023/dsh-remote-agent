@@ -38,6 +38,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { NodeRegistry } from '../lib/hub/node-registry.js'
+import { NODE_TO_HUB } from '../lib/protocol.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, '..')
@@ -137,15 +139,68 @@ test('#27-2：RESOURCE 帧带 models，且来自缓存（同步 interval 不能 
 
 /* ═══════════════ 段 3：hub 摄入 ═══════════════ */
 
-test('#27-3：hub 摄入 models 做字段级清洗 + 独立封顶', () => {
-  const code = stripComments(ingest)
-  const i = code.indexOf('const rawModels')
-  assert.ok(i >= 0, '应摄入 models')
-  const seg = code.slice(i, i + 1400)
+// 真帧走真 NodeRegistry：不扫源码，断言落在注册表里真实留下的记录上。
+function ingestResource(d) {
+  const registry = new NodeRegistry({ log() {}, relay: { ready: true, send: () => true } })
+  registry.nodes.set('n1', { nodeId: 'n1', online: true, lastSeen: 0 })
+  registry.handleFrameFor('n1', { t: NODE_TO_HUB.RESOURCE, d })
+  return registry.nodes.get('n1')
+}
 
-  assert.match(seg, /MAX_NODE_MODELS/, 'hub 侧必须**独立封顶**（不能信任对端遵守了自己的上限）')
-  assert.match(seg, /typeof m\.id === 'string'/, 'id 必须类型校验')
-  assert.match(seg, /cleaned\.push\(\{/, '应逐条构造（不 spread）')
+test('#27-3：真 RESOURCE 帧 → 字段级清洗 + 独立封顶，efforts 一路保留', () => {
+  const rec = ingestResource({
+    models: {
+      models: [
+        { provider: 'ccmax', id: 'sonnet', name: 'Sonnet', efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] },
+        { provider: 'piion', id: 'm1', name: 'M1' },
+        { provider: 'bad', id: '   ', name: 'blank id' },
+        { nope: true },
+      ],
+    },
+  })
+  // 缺 id / 非对象被丢弃；带 efforts 的条目原样（深等）保留；无 efforts 的条目不带该键。
+  assert.deepEqual(rec.models, [
+    { provider: 'ccmax', id: 'sonnet', name: 'Sonnet', efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] },
+    { provider: 'piion', id: 'm1', name: 'M1' },
+  ])
+})
+
+test('#27-3 边界：id ≤64、name ≤128，空 id 与非对象丢弃', () => {
+  const longId = 'x'.repeat(100)
+  const longName = 'y'.repeat(200)
+  const rec = ingestResource({
+    models: {
+      models: [{
+        provider: 'p', id: 'm', name: 'M',
+        efforts: [
+          { id: longId, name: longName },
+          { id: '', name: 'no id' },
+          { id: '   ', name: 'blank id' },
+          null,
+          'low',
+          { id: 'ok' },
+        ],
+      }],
+    },
+  })
+  assert.deepEqual(rec.models[0].efforts, [
+    { id: longId.slice(0, 64), name: longName.slice(0, 128) },
+    { id: 'ok', name: 'ok' },
+  ])
+})
+
+test('#27-3 边界：efforts 条数独立封顶（16）', () => {
+  const rec = ingestResource({
+    models: { models: [{ provider: 'p', id: 'm', name: 'M', efforts: Array.from({ length: 40 }, (_, i) => ({ id: 'e' + i, name: 'E' + i })) }] },
+  })
+  const got = rec.models[0].efforts
+  assert.equal(got.length, 16, 'hub 自己封顶，不信任对端')
+  assert.equal(got[15].id, 'e15')
+})
+
+test('#27-3 R3：空 effort id（含纯空白）必须被过滤', () => {
+  const rec = ingestResource({ models: { models: [{ provider: 'p', id: 'm', name: 'M', efforts: [{ id: '', name: 'x' }, { id: '  ', name: 'y' }, { id: 'ok' }] }] } })
+  assert.deepEqual(rec.models[0].efforts, [{ id: 'ok', name: 'ok' }], '只剩有效等级，name 回退到 id')
 })
 
 test('#27-3：models 为 null 时**保留旧值**（一次抖动不清空面板下拉）', () => {

@@ -9,6 +9,15 @@
 
 ---
 
+## [0.10.1-fork.68] — 2026-11-11
+
+### Fixed
+- **s60-B：hub 入站不再丢 effort 等级**：`lib/hub/registry-ingest.js` 的 RESOURCE 分支重建模型条目时只留 `{provider,id,name}`，节点上报的 `efforts` 到不了 `rec.models`，主控选择器因此看不到思考等级。现在逐项清洗后保留：非对象 / 空或纯空白 `id` 丢弃，`id≤64`、`name≤128`，条数独立封顶 16（不信任对端）；无等级的条目仍不带该键。
+- **空 effort id**：节点侧 `lib/node/model-catalog.js` 先 `trim` 再判空，纯空白 id 不再上报（R3 盲区）。
+
+### Tests
+- `test/model-list-dropdown.test.js`：`#27-3` 从源码扫描改为行为测试——喂真 `NODE_TO_HUB.RESOURCE` 帧给真 `NodeRegistry.handleFrameFor`，对 `rec.models` 深等断言 `efforts` 原样保留；新增边界（空 id 丢弃、id/name 截断、条数封顶）与 R3 用例。
+
 ## [0.10.1-fork.67] — 2026-11-10
 
 ### Added
