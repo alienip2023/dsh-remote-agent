@@ -151,7 +151,7 @@ test('bot/turn-result is emitted by exchangeId and a bad frame is dropped', () =
   registry.on('botTurnResult', (payload) => got.push(payload))
   registry.handleFrameFor('n1', {
     t: NODE_TO_HUB.BOT_TURN_RESULT,
-    d: { nodeId: 'n1', remoteBotId: 'alpha', exchangeId: 'e1', text: 'pong', ok: true },
+    d: { nodeId: 'n1', remoteBotId: 'alpha', exchangeId: 'e1', text: 'pong', ok: true, seq: 1 },
   })
   registry.handleFrameFor('n1', { t: NODE_TO_HUB.BOT_TURN_RESULT, d: { text: 'no-id' } })
   assert.equal(got.length, 1)
