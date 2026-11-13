@@ -247,3 +247,62 @@ test('i. an llm models-updated event refreshes the catalog at once', async () =>
   await new Promise(resolve => setTimeout(resolve, 30))
   assert.equal(probes, 2, 'the event probes without waiting for the cycle')
 })
+
+// ── an llm that is not there yet is retried, then accepted once after the cap ──
+// Knife: treat unavailable as "no providers" → j never retries (one access, no warn)
+test('j. an unavailable llm is retried and then accepted once, caching nothing', async () => {
+  let accesses = 0
+  const warns = []
+  const ctx = {
+    logger: { warn: (message) => warns.push(message) },
+    get: (name) => {
+      if (name === 'llm') { accesses++; return undefined }
+      if (name === 'settings') return { describe: () => [] }
+      if (name === 'logger') return ctx.logger
+      return undefined
+    },
+  }
+  const refresher = createModelRefresher(ctx, { refreshMs: 10_000, retryMs: 5 })
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 120))
+  assert.equal(accesses, 6, 'an unready llm is retried until the sixth probe')
+  assert.equal(warns.length, 1, 'the settled unavailable catalog warns exactly once')
+  assert.equal(refresher.getCachedModels(), null, 'nothing is cached while the llm is unavailable')
+  const settled = accesses
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal(accesses, settled, 'after settling there is no 30s loop any more')
+})
+
+// ── a live catalog resets the warning, so a later empty streak warns again ──
+test('k. a successful probe resets the warning for a later empty streak', async () => {
+  let mode = 'empty'
+  const warns = []
+  const ctx = {
+    logger: { warn: (message) => warns.push(message) },
+    get: (name) => {
+      if (name === 'llm') return {
+        listProviders: () => [{ id: 'prov-cycle' }],
+        listModels: async () => (mode === 'live' ? [{ id: 'recovered', name: 'Recovered' }] : []),
+        listConfigurableProviders: () => [],
+      }
+      if (name === 'settings') return { describe: () => [] }
+      if (name === 'logger') return ctx.logger
+      return undefined
+    },
+  }
+  const refresher = createModelRefresher(ctx, { refreshMs: 10_000, retryMs: 5 })
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 120))
+  assert.equal(warns.length, 1, 'the first empty streak warns once')
+  assert.equal(refresher.getCachedModels(), null)
+
+  mode = 'live'
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal(refresher.getCachedModels()?.models?.[0]?.id, 'recovered', 'a live probe fills the cache again')
+
+  mode = 'empty'
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 120))
+  assert.equal(warns.length, 2, 'a later empty streak warns again after the reset')
+})
