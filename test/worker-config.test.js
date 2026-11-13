@@ -396,8 +396,11 @@ test('buildNodeHello：形状正确且能过 validateHello', (t) => {
   assert.ok(Array.isArray(hello.shells) && hello.shells.length > 0)
   assert.ok(Array.isArray(hello.roots))
   assert.ok(Array.isArray(hello.caps))
+  // bot-memory-update/1 让 hub 知道这条节点能接住 bot/update 里的 memoryConfig
+  // （M4 S6 补片；老节点没有这条，hub 就不发该字段）。
   assert.deepEqual(hello.caps, [
     'fs', 'exec', 'artifact', 'agent', 'file-transfer', 'selfcheck', 'config-sync/2', 'peer/v1', 'memory-sync/1',
+    'bot-memory-update/1',
     ...(process.platform === 'win32' ? ['desktop', 'gui'] : []),
   ])
 
