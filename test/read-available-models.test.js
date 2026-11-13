@@ -306,3 +306,99 @@ test('k. a successful probe resets the warning for a later empty streak', async 
   await new Promise(resolve => setTimeout(resolve, 120))
   assert.equal(warns.length, 2, 'a later empty streak warns again after the reset')
 })
+
+// ── settling an unavailable llm is fail-closed: the old catalog goes away ──
+// Knife: settle without clearing the cache → l fails (stale models stay visible)
+test('l. settling an unavailable llm clears the catalog that was cached before', async () => {
+  let available = true
+  let accesses = 0
+  const warns = []
+  const live = {
+    listProviders: () => [{ id: 'prov-live' }],
+    listModels: async () => [{ id: 'model-A', name: 'Model A' }],
+    listConfigurableProviders: () => [],
+  }
+  const ctx = {
+    logger: { warn: (message) => warns.push(message) },
+    get: (name) => {
+      if (name === 'llm') { accesses++; return available ? live : undefined }
+      if (name === 'settings') return { describe: () => [] }
+      if (name === 'logger') return ctx.logger
+      return undefined
+    },
+  }
+  const refresher = createModelRefresher(ctx, { refreshMs: 10_000, retryMs: 5 })
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal(refresher.getCachedModels()?.models?.[0]?.id, 'model-A', 'the first probe fills the cache')
+
+  available = false
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 120))
+  assert.equal(refresher.getCachedModels(), null, 'a settled unavailable llm must not keep the old catalog')
+  assert.equal(warns.length, 1, 'settling warns once')
+  const settled = accesses
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal(accesses, settled, 'after settling there is no short retry any more')
+})
+
+// ── settling an all-empty live catalog keeps what the declarations say ──
+// This is deliberate: a catalog-only deployment still shows its declared models,
+// two and a half minutes later instead of immediately.
+test('m. settling an all-empty live catalog caches the declared models', async () => {
+  let probes = 0
+  const warns = []
+  const ctx = {
+    logger: { warn: (message) => warns.push(message) },
+    get: (name) => {
+      if (name === 'llm') return {
+        listProviders: () => [{ id: 'prov-cat' }],
+        listModels: async () => { probes++; return [] },
+        listConfigurableProviders: () => [{ provider: 'prov-cat', settingsNs: 'ns-cat', settingsPath: ['providers', 'prov-cat'] }],
+      }
+      if (name === 'settings') return {
+        describe: () => [{ ns: 'ns-cat', value: { providers: { 'prov-cat': { models: [{ id: 'declared-1', name: 'Declared One' }] } } } }],
+      }
+      if (name === 'logger') return ctx.logger
+      return undefined
+    },
+  }
+  const refresher = createModelRefresher(ctx, { refreshMs: 10_000, retryMs: 5 })
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 120))
+  assert.equal(probes, 6, 'the declared list only becomes truth after the sixth empty probe')
+  assert.equal(refresher.getCachedModels()?.models?.[0]?.id, 'declared-1', 'the settled catalog carries the declared model')
+  assert.equal(warns.length, 1)
+  const settled = probes
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal(probes, settled, 'the settled catalog waits for the long cycle')
+})
+
+// ── losing every provider is a settled null, and it clears what was cached ──
+test('n. providers going to zero clears the cache without a short retry', async () => {
+  let providers = [{ id: 'prov-gone' }]
+  let probes = 0
+  const ctx = {
+    get: (name) => {
+      if (name === 'llm') return {
+        listProviders: () => providers,
+        listModels: async () => { probes++; return [{ id: 'model-A', name: 'Model A' }] },
+        listConfigurableProviders: () => [],
+      }
+      if (name === 'settings') return { describe: () => [] }
+      return undefined
+    },
+  }
+  const refresher = createModelRefresher(ctx, { refreshMs: 10_000, retryMs: 5 })
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal(refresher.getCachedModels()?.models?.[0]?.id, 'model-A')
+
+  providers = []
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal(refresher.getCachedModels(), null, 'no providers means no catalog, not the old one')
+  const settled = probes
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal(probes, settled, 'a provider-less catalog is not retried on the short interval')
+})
