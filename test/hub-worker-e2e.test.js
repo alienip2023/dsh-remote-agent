@@ -269,8 +269,8 @@ async function setup(t, { root, mode, relay, resourceIntervalMs, nodeToken = '' 
     nodeId: 'test-worker',
     stateDir: path.join(root, 'worker-state'),
     roots: [wsRoot],
-    // maxConcurrent 不传 —— 走生产默认（提案 #26-2 起为 4），让 e2e 与
-    // 真实装配一致（资源遥测用例钉住这个默认值）。
+    // maxConcurrent 不传 —— 走生产默认（提案 #26-2 起默认 8，本单前为 4），
+    // 让 e2e 与真实装配一致（资源遥测用例钉住这个默认值）。
     resumeQueued: false,
   }
   if (mode === 'relay') {
@@ -901,10 +901,10 @@ test('hub⇄worker e2e：资源遥测到 hub（60ms 间隔贯通全链路）', a
   assert.ok(n.resource.memUsedMb >= 0, '内存用量应非负')
   assert.ok(Number.isFinite(n.resource.at), '应有上报时间戳')
 
-  // 提案 #26-3：队列健康快照随资源帧搭车贯通。maxConcurrent===4 同时钉住
-  // #26-2 的新默认值（本用例的 workerConfig 未传 maxConcurrent）。
+  // 提案 #26-3：队列健康快照随资源帧搭车贯通。maxConcurrent===8 同时钉住
+  // #26-2 起默认 8（本用例的 workerConfig 未传 maxConcurrent）。
   assert.ok(n.queue, '资源帧应携带 queue 快照（新副机）')
-  assert.equal(n.queue.maxConcurrent, 4, 'maxConcurrent 默认应为 4')
+  assert.equal(n.queue.maxConcurrent, 8, 'maxConcurrent 默认应为 8')
   assert.equal(typeof n.queue.queued, 'number')
   assert.equal(typeof n.queue.running, 'number')
   assert.ok(n.queue.oldestQueuedMs >= 0)
