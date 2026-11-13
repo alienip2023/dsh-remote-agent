@@ -710,7 +710,7 @@ test('#26-1 默认超时常量：exec 10 分钟 / agent 1 小时，引擎兜底�
   assert.match(src, /rec\.constraints\?\.timeoutMs \?\? AGENT_DEFAULT_TIMEOUT_MS/, 'runAgent 兜底应引用 AGENT_DEFAULT_TIMEOUT_MS')
 })
 
-test('#26-2 maxConcurrent 默认 4（显式配置仍然生效）', () => {
+test('#26-2 maxConcurrent 默认 8（显式配置仍然生效）', () => {
   const bare = ({ maxConcurrent } = {}) => new TaskEngine({
     store: { get: () => undefined, list: () => [] },
     artifacts: {},
@@ -721,7 +721,7 @@ test('#26-2 maxConcurrent 默认 4（显式配置仍然生效）', () => {
     send: () => {},
     ...(maxConcurrent !== undefined ? { maxConcurrent } : {}),
   })
-  assert.equal(bare().maxConcurrent, 4, '不传 maxConcurrent 时默认应为 4')
+  assert.equal(bare().maxConcurrent, 8, '不传 maxConcurrent 时默认应为 8')
   assert.equal(bare({ maxConcurrent: 2 }).maxConcurrent, 2, '显式配置必须原样生效')
 })
 
@@ -735,6 +735,9 @@ test('#26-3 queueStats：排队/并发/最久等待与 starved 判定', () => {
     roots: [],
     defaultWorkspace: '',
     send: () => {},
+    // 本用例测 queueStats 的判定逻辑，与默认值无关：把上限钉在 4，
+    // 默认值本身由 node-config.test.js 的 'a node runs 8 tasks by default' 覆盖。
+    maxConcurrent: 4,
   })
   const now = Date.now()
 
