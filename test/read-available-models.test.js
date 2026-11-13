@@ -108,3 +108,142 @@ test('d. createModelRefresher: first call returns null, retry fills cache', asyn
   assert.ok(cached, 'cache must be filled after successful retry')
   assert.equal(cached.models[0].id, 'retry-model', 'cached model must be retry-model')
 })
+
+// ── an empty live catalog with providers configured is a probe that has to be repeated ──
+// Knife: cache the all-empty result (or fall back to declarations) → e must fail
+test('e. an all-empty live probe with providers is not cached and is retried', async () => {
+  let probes = 0
+  const ctx = {
+    get: (name) => {
+      if (name === 'llm') return {
+        listProviders: () => [{ id: 'prov-empty' }],
+        listModels: async () => { probes++; return [] },
+        listConfigurableProviders: () => [{ provider: 'prov-empty', settingsNs: 'ns-e', settingsPath: ['providers', 'prov-empty'] }],
+      }
+      if (name === 'settings') return {
+        describe: () => [{ ns: 'ns-e', value: { providers: { 'prov-empty': { models: [{ id: 'stale-model' }] } } } }],
+      }
+      return undefined
+    },
+  }
+  const seen = []
+  const refresher = createModelRefresher(ctx, {
+    refreshMs: 10_000,
+    retryMs: 15,
+    onResult: (r, cached) => seen.push({ r, cached }),
+  })
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 70))
+  assert.ok(probes >= 2, 'the empty live catalog must be probed again on the retry interval')
+  assert.equal(refresher.getCachedModels(), null, 'an all-empty probe is never cached, not even from declarations')
+  assert.ok(seen.every(entry => entry.r === null), 'an all-empty probe reports null, never a fallback as truth')
+})
+
+// ── once the live catalog has models the long cycle takes over ──
+test('f. a later probe with models fills the cache and a long cycle follows', async () => {
+  let probes = 0
+  const ctx = {
+    get: (name) => {
+      if (name === 'llm') return {
+        listProviders: () => [{ id: 'prov-late' }],
+        listModels: async () => {
+          probes++
+          if (probes === 1) return []
+          return [{ id: 'late-model', name: 'Late Model' }]
+        },
+        listConfigurableProviders: () => [{ provider: 'prov-late', settingsNs: 'ns-late', settingsPath: ['providers', 'prov-late'] }],
+      }
+      if (name === 'settings') return {
+        describe: () => [{ ns: 'ns-late', value: { providers: { 'prov-late': { models: [{ id: 'stale-model' }] } } } }],
+      }
+      return undefined
+    },
+  }
+  const refresher = createModelRefresher(ctx, { refreshMs: 10_000, retryMs: 15 })
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 80))
+  assert.ok(refresher.getCachedModels(), 'the second probe must fill the cache')
+  assert.equal(refresher.getCachedModels().models[0].id, 'late-model')
+  const settled = probes
+  await new Promise(resolve => setTimeout(resolve, 60))
+  assert.equal(probes, settled, 'after a hit the next probe waits for the long cycle, not the retry interval')
+})
+
+// ── six all-empty probes in a row are accepted, with one warning ──
+// Knife: remove the retry limit → g never settles (probes keep coming, no warning)
+test('g. six all-empty probes in a row settle the catalog and warn once', async () => {
+  let probes = 0
+  const warns = []
+  const ctx = {
+    logger: { warn: (message) => warns.push(message) },
+    get: (name) => {
+      if (name === 'llm') return {
+        listProviders: () => [{ id: 'prov-settled' }],
+        listModels: async () => { probes++; return [] },
+        listConfigurableProviders: () => [],
+      }
+      if (name === 'settings') return { describe: () => [] }
+      if (name === 'logger') return ctx.logger
+      return undefined
+    },
+  }
+  const refresher = createModelRefresher(ctx, { refreshMs: 10_000, retryMs: 5 })
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 120))
+  assert.equal(probes, 6, 'the sixth empty probe is the last one on the retry interval')
+  assert.equal(warns.length, 1, 'the settled empty catalog warns exactly once')
+  const settled = probes
+  await new Promise(resolve => setTimeout(resolve, 50))
+  assert.equal(probes, settled, 'after settling there is no 30s loop any more')
+})
+
+// ── no providers at all is a settled null, not a retry ──
+test('h. no providers at all caches null and does not retry', async () => {
+  let modelsCalls = 0
+  const ctx = {
+    get: (name) => {
+      if (name === 'llm') return {
+        listProviders: () => [],
+        listModels: async () => { modelsCalls++; return [] },
+        listConfigurableProviders: () => [],
+      }
+      if (name === 'settings') return { describe: () => [] }
+      return undefined
+    },
+  }
+  const refresher = createModelRefresher(ctx, { refreshMs: 10_000, retryMs: 5 })
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 60))
+  assert.equal(modelsCalls, 0, 'no provider means nothing to list')
+  assert.equal(refresher.getCachedModels(), null)
+  const seen = modelsCalls
+  await new Promise(resolve => setTimeout(resolve, 50))
+  assert.equal(modelsCalls, seen, 'a provider-less catalog is not retried on the short interval')
+})
+
+// ── a model list update wakes the refresher immediately ──
+test('i. an llm models-updated event refreshes the catalog at once', async () => {
+  let probes = 0
+  const listeners = new Map()
+  const ctx = {
+    on: (event, listener) => { listeners.set(event, listener) },
+    get: (name) => {
+      if (name === 'llm') return {
+        listProviders: () => [{ id: 'prov-event' }],
+        listModels: async () => { probes++; return [{ id: 'event-model', name: 'Event Model' }] },
+        listConfigurableProviders: () => [],
+      }
+      if (name === 'settings') return { describe: () => [] }
+      return undefined
+    },
+  }
+  const refresher = createModelRefresher(ctx, { refreshMs: 10_000, retryMs: 10_000 })
+  assert.equal(typeof listeners.get('llm/models-updated'), 'function', 'the refresher subscribes to llm/models-updated')
+  assert.equal(typeof listeners.get('llm/adapters-updated'), 'function', 'the refresher subscribes to llm/adapters-updated')
+  refresher.refresh()
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(probes, 1)
+  listeners.get('llm/models-updated')()
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(probes, 2, 'the event probes without waiting for the cycle')
+})
