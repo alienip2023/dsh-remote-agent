@@ -25,6 +25,31 @@ test('bot/create requires nodeId, requestId and name', () => {
   assert.equal(validateBotCreate({ nodeId: 'n', requestId: 'r', name: '' }).error, 'bot-create-name-missing')
 })
 
+test('bot/create carries the hub ownership marker and the default effort', async () => {
+  const v = validateBotCreate({ nodeId: 'n', requestId: 'r', name: 'A', modelRef: 'p/m', managedBy: 'hub', defaultEffort: 'high' })
+  assert.equal(v.ok, true)
+  assert.equal(v.create.managedBy, 'hub')
+  assert.equal(v.create.defaultEffort, 'high')
+  assert.equal(v.create.effort, null, 'the explicit effort stays separate')
+
+  // Through the real handler the receiver gets both fields, unmodified.
+  const seen = []
+  const sent = []
+  const ctx = { get: name => (name === 'remote-agent:bot-create' ? async (spec) => { seen.push(spec); return { ok: true, remoteBotId: 'b1', name: 'A', role: '' } } : undefined) }
+  await handleBotCreateFrame({ frame: { id: 'f1' }, data: { nodeId: 'n', requestId: 'r', name: 'A', modelRef: 'p/m', managedBy: 'hub', defaultEffort: 'high' }, ctx, send: (type, data) => sent.push({ type, data }), sendError: () => {} })
+  assert.equal(seen[0].managedBy, 'hub')
+  assert.equal(seen[0].defaultEffort, 'high')
+  assert.equal(sent[0].type, NODE_TO_HUB.BOT_CREATE_RESULT)
+})
+
+test('bot/create refuses an unknown managedBy and reads a bad defaultEffort as absent', () => {
+  assert.equal(validateBotCreate({ nodeId: 'n', requestId: 'r', name: 'A', managedBy: 'node' }).error, 'bot-create-managedBy-invalid')
+  assert.equal(validateBotCreate({ nodeId: 'n', requestId: 'r', name: 'A', managedBy: 7 }).error, 'bot-create-managedBy-invalid')
+  assert.equal(validateBotCreate({ nodeId: 'n', requestId: 'r', name: 'A' }).create.managedBy, null)
+  assert.equal(validateBotCreate({ nodeId: 'n', requestId: 'r', name: 'A', defaultEffort: 7 }).create.defaultEffort, null)
+  assert.equal(validateBotCreate({ nodeId: 'n', requestId: 'r', name: 'A', defaultEffort: 'x'.repeat(200) }).create.defaultEffort.length, 64)
+})
+
 test('bot/create-result validates success and failure shapes', () => {
   const ok = validateBotCreateResult({ requestId: 'r', ok: true, remoteBotId: 'bot-1', name: 'Alpha', role: '写' })
   assert.equal(ok.ok, true)
