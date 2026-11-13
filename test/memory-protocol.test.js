@@ -14,6 +14,7 @@ import {
   MEMORY_CAPS,
   isMemoryFrameType,
   validateMemAck,
+  validateBotCreate,
   validateMemRead,
   validateMemSnapshot,
   validateMemWrite,
@@ -166,5 +167,42 @@ test('transport puts the whole mem family in the e2e-required set, and bodies wa
   // hello / ack 是控制帧：会话尚未建立时也能通过（正文帧不行）。
   for (const type of [MEMORY.HELLO, MEMORY.ACK]) {
     assert.equal(checkE2EGate({ t: type }, { e2e: false, wasEncrypted: false }).rejected, false)
+  }
+})
+
+
+test('a node tells the hub how far its cache got, before and after it loads it', () => {
+  const { link, sent } = linkFor({ appliedSeq: () => 0 })
+  link.bind('n-1')
+  // Online sends the first hello with the seq the link was built with (0 before the
+  // node has loaded its cache).
+  assert.equal(link.online(), true)
+  assert.deepEqual(sent.at(-1), { type: MEMORY.HELLO, data: { nodeId: 'n-1', appliedSeq: 0 } })
+
+  // S4 hands the link a thunk that reads the cache, then announces again: the hub sees
+  // the applied seq instead of a needless full snapshot.
+  let applied = 12
+  assert.equal(link.setAppliedSeq(() => applied), 12)
+  assert.equal(link.announce(), true)
+  assert.deepEqual(sent.at(-1), { type: MEMORY.HELLO, data: { nodeId: 'n-1', appliedSeq: 12 } })
+  applied = 13
+  link.online()
+  assert.deepEqual(sent.at(-1), { type: MEMORY.HELLO, data: { nodeId: 'n-1', appliedSeq: 13 } })
+
+  link.offline()
+  assert.equal(link.announce(), false)
+})
+
+test('bot/create carries the memory backend the main picked, and a bad shape is dropped', () => {
+  const base = { nodeId: 'n', requestId: 'r', name: 'One', managedBy: 'hub' }
+  const ok = validateBotCreate({ ...base, memoryConfig: { backend: 'federation' } })
+  assert.equal(ok.ok, true)
+  assert.deepEqual(ok.create.memoryConfig, { backend: 'federation' })
+  // A field of the wrong type is "not given", never a refused frame: an older hub and
+  // an older node must still be able to create Bots.
+  for (const bad of [null, 'federation', [], { backend: 3 }, { backend: ' '.repeat(4) }, { backend: 'x'.repeat(40) }]) {
+    const parsed = validateBotCreate({ ...base, memoryConfig: bad })
+    assert.equal(parsed.ok, true, JSON.stringify(bad))
+    assert.equal(parsed.create.memoryConfig, null, JSON.stringify(bad))
   }
 })
