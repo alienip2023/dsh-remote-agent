@@ -2,10 +2,15 @@
 //   有任务时不重启（drainRestart 被切成「不管有没有任务都立刻重启」就红）、
 //   排空后重启（被切成「排空了也不重启」就红）、
 //   对账不误杀（reconcileOnStartup 被切成「一律标 interrupted」就红）。
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { drainRestart } from '../lib/node/config-sync.js'
 import { reconcileOnStartup } from '../lib/node/startup-reconcile.js'
+import { TaskStore } from '../lib/node/task-store.js'
+import { TaskEngine } from '../lib/node/task-engine.js'
 import { TASK_STATUS } from '../lib/protocol.js'
 
 test('有任务在跑时，配置重启被推迟，不立刻重启', () => {
@@ -129,4 +134,40 @@ test('启动对账：进程换了才把 RUNNING 任务标 interrupted', () => {
   assert.equal(updates[0][1].error.code, 'node-restart')
   assert.equal(tally.interrupted, 3)
   assert.equal(tally.kept, 0)
+})
+
+// 两个真 TaskStore 共用一个目录：上一代写完只进它自己的缓存和磁盘，新一代的
+// 缓存是构造时读的。删掉 syncAll 里的 reload，这条报上来的就是 running。
+test('重载后重连，新实例上报上一代已经写进磁盘的完成', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ra-reload-sync-'))
+  try {
+    const oldStore = new TaskStore(dir)
+    oldStore.create({ taskId: 't-reload', mode: 'exec', goal: 'g' }, { nodeId: 'n1', workspace: dir })
+    oldStore.update('t-reload', { status: TASK_STATUS.RUNNING })
+
+    const newStore = new TaskStore(dir)
+    assert.equal(newStore.get('t-reload').status, TASK_STATUS.RUNNING, 'the new cache was read while the task was still running')
+
+    oldStore.update('t-reload', { status: TASK_STATUS.COMPLETED, endedAt: Date.now() })
+    assert.equal(newStore.get('t-reload').status, TASK_STATUS.RUNNING, 'the completion never reaches the new cache on its own')
+
+    const frames = []
+    const engine = new TaskEngine({
+      store: newStore,
+      artifacts: {},
+      runner: {},
+      nodeId: 'n1',
+      roots: [dir],
+      defaultWorkspace: dir,
+      send: (type, data) => frames.push({ type, data }),
+    })
+    engine.syncAll()
+
+    const sync = frames.find((f) => f.type === 'task/sync')
+    assert.ok(sync, 'a reconnect reports the task')
+    assert.equal(sync.data.tasks.length, 1)
+    assert.equal(sync.data.tasks[0].status, TASK_STATUS.COMPLETED, 'the completion written to disk is what gets reported, not the stale running')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
