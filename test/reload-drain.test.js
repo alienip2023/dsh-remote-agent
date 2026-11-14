@@ -93,22 +93,40 @@ test('上界之后才排空，重启仍要发出', () => {
   assert.equal(typeof pending, 'function')
 })
 
-test('启动对账只把没有活 runner 的任务标 interrupted，能接的接回来', () => {
+const self = { pid: 4242, startedAt: 1_700_000_000_000 }
+
+test('启动对账：同一进程留下的 RUNNING 任务原样保留', () => {
   const updates = []
   const store = {
     list: () => [
-      { taskId: 'live', status: TASK_STATUS.RUNNING },
-      { taskId: 'dead', status: TASK_STATUS.RUNNING },
-      { taskId: 'done', status: TASK_STATUS.SUCCEEDED },
+      { taskId: 'still-running', status: TASK_STATUS.RUNNING, ownerPid: self.pid, ownerStartedAt: self.startedAt },
+      { taskId: 'done', status: TASK_STATUS.SUCCEEDED, ownerPid: self.pid, ownerStartedAt: self.startedAt },
     ],
     update: (taskId, patch) => updates.push([taskId, patch]),
   }
-  const tally = reconcileOnStartup(store, {
-    alive: (taskId) => taskId === 'live',
-  })
-  assert.deepEqual(updates.map(([id]) => id), ['dead'], 'the task a runner still holds is not marked interrupted')
+  const tally = reconcileOnStartup(store, { self })
+  assert.deepEqual(updates, [], 'a task owned by this same process is not marked interrupted')
+  assert.equal(tally.kept, 1)
+  assert.equal(tally.interrupted, 0)
+})
+
+test('启动对账：进程换了才把 RUNNING 任务标 interrupted', () => {
+  const updates = []
+  const store = {
+    list: () => [
+      // 新引擎的 running 表是空的也一样：属主进程不同，就该标 interrupted。
+      { taskId: 'old-proc', status: TASK_STATUS.RUNNING, ownerPid: self.pid + 1, ownerStartedAt: self.startedAt },
+      // pid 被复用，但进程启动时刻对不上，仍是另一个进程。
+      { taskId: 'reused-pid', status: TASK_STATUS.RUNNING, ownerPid: self.pid, ownerStartedAt: self.startedAt - 60_000 },
+      // 升级前留下的记录没有属主，无法证明还是这个进程，按换了进程处理。
+      { taskId: 'no-owner', status: TASK_STATUS.RUNNING },
+    ],
+    update: (taskId, patch) => updates.push([taskId, patch]),
+  }
+  const tally = reconcileOnStartup(store, { self })
+  assert.deepEqual(updates.map(([id]) => id), ['old-proc', 'reused-pid', 'no-owner'])
   assert.equal(updates[0][1].status, TASK_STATUS.INTERRUPTED)
   assert.equal(updates[0][1].error.code, 'node-restart')
-  assert.equal(tally.interrupted, 1)
-  assert.equal(tally.kept, 1)
+  assert.equal(tally.interrupted, 3)
+  assert.equal(tally.kept, 0)
 })
