@@ -171,3 +171,47 @@ test('重载后重连，新实例上报上一代已经写进磁盘的完成', ()
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// 真实顺序和上面那条相反：重载后秒级重连时任务还在跑，syncAll 报的是 running；
+// 上一代要到很久之后才写完，而它的 task/end 走的是已经停掉的连接，帧丢了，
+// 之后不再有 sync。活着的这一代必须在完成落盘那一拍把 task/end 补出去。
+// 切掉 replaySettled 里的 this.send('task/end') 这条就红。
+test('完成落在重连之后，新实例把磁盘上的终态补发给 hub', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ra-reload-replay-'))
+  try {
+    const oldStore = new TaskStore(dir)
+    oldStore.create({ taskId: 't-late', mode: 'exec', goal: 'g' }, { nodeId: 'n1', workspace: dir })
+    oldStore.update('t-late', { status: TASK_STATUS.RUNNING, startedAt: 1_000 })
+
+    const newStore = new TaskStore(dir)
+    const frames = []
+    const engine = new TaskEngine({
+      store: newStore,
+      artifacts: {},
+      runner: {},
+      nodeId: 'n1',
+      roots: [dir],
+      defaultWorkspace: dir,
+      send: (type, data) => { frames.push({ type, data }); return true },
+    })
+
+    engine.syncAll()
+    const firstSync = frames.find((f) => f.type === 'task/sync')
+    assert.equal(firstSync.data.tasks[0].status, TASK_STATUS.RUNNING, 'the reconnect reports the task still running')
+
+    // 上一代这才写完。它的 send 绑的是已停的连接，task/end 到不了 hub，只落了盘。
+    oldStore.update('t-late', { status: TASK_STATUS.COMPLETED, endedAt: 5_000 })
+    assert.equal(frames.filter((f) => f.type === 'task/end').length, 0, 'nothing has reported the completion yet')
+
+    const replayed = engine.replaySettled()
+
+    assert.equal(replayed, 1, 'the completion is replayed exactly once')
+    const end = frames.find((f) => f.type === 'task/end')
+    assert.ok(end, 'a task/end reaches the live transport when the completion lands')
+    assert.equal(end.data.taskId, 't-late')
+    assert.equal(end.data.status, TASK_STATUS.COMPLETED, 'the hub is told the task completed, not left at running')
+    assert.equal(engine.replaySettled(), 0, 'the same completion is not sent again on the next pass')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
