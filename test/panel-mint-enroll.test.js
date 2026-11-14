@@ -162,7 +162,31 @@ test('relay 不可达：中文 code，不抛 500 裸栈', async () => {
   assert.equal(/\n\s+at /.test(res.raw), false, res.raw)
 })
 
-test('非 relay 模式：不打中继，中文说明配对码', async () => {
+test('direct 模式但地址和口令齐备：铸造成功，响应只含 token 与 expiresInMs', async () => {
+  let seen = null
+  const relay = await startFakeRelay((req, res, json) => {
+    const url = new URL(req.url, 'http://127.0.0.1')
+    seen = { path: url.pathname, token: url.searchParams.get('token'), nodeId: json.nodeId }
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ token: 'enr_direct', expiresInMs: 900000, echoed: HUB_TOKEN }))
+  })
+  try {
+    const { port } = relay.address()
+    const handler = mountUi(relayConfig(port, { transportMode: 'direct' })).get(MINT_PATH)
+    const res = await invoke(handler, { body: { nodeId: 'worker-direct' } })
+    assert.equal(res.status, 200, res.raw)
+    assert.deepEqual(Object.keys(res.body).sort(), ['expiresInMs', 'token'])
+    assert.deepEqual(res.body, { token: 'enr_direct', expiresInMs: 900000 })
+    assert.equal(res.raw.includes(HUB_TOKEN), false, '响应体不得含 hubToken')
+    assert.equal(seen.path, '/api/relay/token')
+    assert.equal(seen.token, HUB_TOKEN)
+    assert.equal(seen.nodeId, 'worker-direct')
+  } finally {
+    await new Promise((resolve) => relay.close(resolve))
+  }
+})
+
+test('缺口令：400 no-relay-token，不打中继，不回显 hubToken', async () => {
   let hits = 0
   const relay = await startFakeRelay((req, res) => {
     hits += 1
@@ -171,12 +195,36 @@ test('非 relay 模式：不打中继，中文说明配对码', async () => {
   })
   try {
     const { port } = relay.address()
-    const handler = mountUi(relayConfig(port, { transportMode: 'direct' })).get(MINT_PATH)
-    const res = await invoke(handler, { body: { nodeId: 'nope' } })
+    const config = relayConfig(port, { transportMode: 'direct' })
+    config.relay = { url: config.relay.url, token: '' }
+    const handler = mountUi(config).get(MINT_PATH)
+    const res = await invoke(handler, { body: {} })
     assert.equal(res.status, 400, res.raw)
-    assert.equal(res.body.error, 'not-relay')
-    assert.match(res.body.message, /配对码/)
-    assert.equal(hits, 0, '直连模式不得请求中继')
+    assert.equal(res.body.error, 'no-relay-token')
+    assert.equal(res.raw.includes(HUB_TOKEN), false)
+    assert.equal(hits, 0)
+  } finally {
+    await new Promise((resolve) => relay.close(resolve))
+  }
+})
+
+test('缺地址：400 no-relay-url，不打中继', async () => {
+  let hits = 0
+  const relay = await startFakeRelay((req, res) => {
+    hits += 1
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ token: 'should-not-run', expiresInMs: 1 }))
+  })
+  try {
+    const { port } = relay.address()
+    const config = relayConfig(port, { transportMode: 'direct' })
+    config.relay = { url: '', token: HUB_TOKEN }
+    const handler = mountUi(config).get(MINT_PATH)
+    const res = await invoke(handler, { body: {} })
+    assert.equal(res.status, 400, res.raw)
+    assert.equal(res.body.error, 'no-relay-url')
+    assert.equal(res.raw.includes(HUB_TOKEN), false)
+    assert.equal(hits, 0)
   } finally {
     await new Promise((resolve) => relay.close(resolve))
   }
