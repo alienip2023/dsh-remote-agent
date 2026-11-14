@@ -230,6 +230,27 @@ test('缺地址：400 no-relay-url，不打中继', async () => {
   }
 })
 
+test('非本机调用 /mint-enroll：403 loopback-only，不打中继', async () => {
+  let hits = 0
+  const relay = await startFakeRelay((req, res) => {
+    hits += 1
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ token: 'should-not-run', expiresInMs: 1 }))
+  })
+  try {
+    const { port } = relay.address()
+    const handler = mountUi(relayConfig(port)).get(MINT_PATH)
+    const res = await invoke(handler, { body: { nodeId: 'worker-a' }, remoteAddress: '203.0.113.9' })
+    assert.equal(res.status, 403, res.raw)
+    assert.equal(res.body.error, 'loopback-only')
+    assert.match(res.body.message, /仅限本机/)
+    assert.equal(hits, 0, '回环检查必须先于铸造')
+    assert.equal(res.raw.includes(HUB_TOKEN), false)
+  } finally {
+    await new Promise((resolve) => relay.close(resolve))
+  }
+})
+
 test('跨站请求被守卫拦住，且不打中继', async () => {
   let hits = 0
   const relay = await startFakeRelay((req, res) => {
@@ -258,6 +279,8 @@ test('面板走 /mint-enroll，只显示一次口令，不回显 hubToken', () =
   const mint = sliceFn(CLIENT, 'mintEnroll()', 'previewFix()')
   assert.match(mint, /\/mint-enroll/)
   assert.equal(mint.includes('/relay-enroll'), false, '面板不得再打旧的 /relay-enroll')
+  assert.equal(mint.includes('enrollNodeId'), false, '面板不再持有没人写的 enrollNodeId')
+  assert.match(mint, /apiPost\('\/mint-enroll', \{\}\)/)
 })
 
 test('Hub 模式提交 relayUrl 后 /apply 落盘', async () => {
