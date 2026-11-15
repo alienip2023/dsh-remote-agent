@@ -401,6 +401,7 @@ test('buildNodeHello：形状正确且能过 validateHello', (t) => {
   assert.deepEqual(hello.caps, [
     'fs', 'exec', 'artifact', 'agent', 'file-transfer', 'selfcheck', 'config-sync/2', 'peer/v1', 'memory-sync/1',
     'bot-memory-update/1',
+    'bot-profile-update/1',
     ...(process.platform === 'win32' ? ['desktop', 'gui'] : []),
   ])
 
