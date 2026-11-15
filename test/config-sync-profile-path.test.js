@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -22,7 +22,7 @@ function setDshEnv(t, home) {
 }
 
 function worker(t) {
-  const home = mkdtempSync(path.join(tmpdir(), 'ra-config-profile-'))
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'ra-config-profile-')))
   t.after(() => rmSync(home, { recursive: true, force: true }))
   setDshEnv(t, home)
   let transport
@@ -66,13 +66,14 @@ test('worker config push writes all three providers to installed web and persist
     dshHome: f.home, profileDir: f.web, _systemd: false,
   })
   assert.equal(seed.ok, true)
-  writeFileSync(patchFile, 'plugins: []\n')
+  writeFileSync(patchFile, readFileSync(patchFile, 'utf8').replace(/(?:xai|a6api|dsa6)-model/g, 'old-model'))
   await f.push({ schema: 2, revision: 2, providers, plugins: [] })
   const ack = f.sent.find((f) => f.type === NODE_TO_HUB.CONFIG_ACK)
-  assert.equal(ack?.data.ok, true)
+  assert.equal(ack?.data.ok, true, JSON.stringify(ack))
   assert.equal(ack.data.shouldRestart, false)
   const patch = readFileSync(patchFile, 'utf8')
   for (const { id } of providers) assert.ok(patch.includes(id + '-model'), id)
+  assert.equal(patch.includes('old-model'), false)
   assert.equal(JSON.parse(readFileSync(path.join(f.home, 'config-sync.json'), 'utf8')).appliedRevision, 2)
   assert.equal(existsSync(path.join(f.home, 'profiles', 'desktop')), false)
 })
@@ -92,6 +93,12 @@ test('unresolved worker profile returns a failure result and ACK without touchin
   const ack = f.sent.find((f) => f.type === NODE_TO_HUB.CONFIG_ACK)
   assert.equal(ack?.data.ok, false)
   assert.equal(ack.data.error, 'profile-unresolved')
+  f.sent.length = 0
+  await f.push({ schema: 2, revision: 8, providers: [], plugins: [] })
+  assert.deepEqual(f.sent.map(({ type, data }) => [type, data.ok, data.error]), [
+    [NODE_TO_HUB.NODE_CONFIG_RESULT, false, 'profile-unresolved'],
+    [NODE_TO_HUB.CONFIG_ACK, false, 'profile-unresolved'],
+  ])
   assert.equal(readFileSync(stateFile, 'utf8'), state)
   assert.equal(existsSync(path.join(f.home, 'profiles')), false)
   assert.equal(existsSync(path.join(f.home, '.credentials.yaml')), false)

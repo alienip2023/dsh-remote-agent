@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -19,7 +19,7 @@ function setDshEnv(t, home) {
 }
 
 function fixture(t) {
-  const home = mkdtempSync(path.join(tmpdir(), 'ra-profile-path-'))
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'ra-profile-path-')))
   t.after(() => rmSync(home, { recursive: true, force: true }))
   const profile = (name) => path.join(home, 'profiles', name)
   const install = (name) => {
@@ -68,6 +68,8 @@ test('the actually loaded web installation wins over DSH_HOME scanning', async (
   const installed = await import(pathToFileURL(installedFile).href)
   assert.equal(installed.resolveProfileDir(), f.profile('web'))
   assert.equal(installed.resolvePatchFile(), path.join(f.profile('web'), 'cordis.patch.yml'))
+  process.env.DSH_PROFILE = ' headless '
+  assert.equal(installed.resolveProfileDir(), path.join(otherHome, 'profiles', 'headless'))
 })
 
 test('a sanitized explicit DSH_PROFILE wins over installation and scanning', async (t) => {

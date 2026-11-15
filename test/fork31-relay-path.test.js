@@ -9,7 +9,7 @@ import { currentPatchFile } from '../lib/setup-routes.js'
 import { applyRelayMemory, buildRelayAutoconfigYaml, readRelayToken, readRelayUrl } from '../lib/hub/relay-memory.js'
 import { MANAGED_BEGIN, MANAGED_END, writePatchBlock } from '../lib/setup.js'
 
-const setupRoutesPath = fileFrom('../lib/setup-routes.js')
+const profilePath = fileFrom('../lib/profile-path.js')
 const uiRoutesPath = fileFrom('../lib/hub/ui-routes.js')
 const relayMemoryPath = fileFrom('../lib/hub/relay-memory.js')
 
@@ -29,7 +29,7 @@ function forbiddenDesktopPatch() {
 function assertResolvesWebProfile(resolvePatchFile) {
   const root = mkdtempSync(path.join(tmpdir(), 'fork31-dsh-home-'))
   const webFile = path.join(root, 'profiles', 'web', 'cordis.patch.yml')
-  mkdirSync(path.dirname(webFile), { recursive: true })
+  mkdirSync(path.join(root, 'profiles', 'web', 'node_modules', 'dsh-remote-agent'), { recursive: true })
   writeFileSync(webFile, 'plugins: []\n')
   const prevHome = process.env.DSH_HOME
   const prevProfile = process.env.DSH_PROFILE
@@ -109,14 +109,14 @@ test('T1: 临时 DSH_HOME 只有 profiles/web 时解析到该文件', () => {
   assertResolvesWebProfile(currentPatchFile)
 })
 
-test('M1: 关掉 DSH_HOME 分支后同一条路径断言必须红', async () => {
+test('M1: 关掉已安装 profile 扫描后同一条路径断言必须红', async () => {
   await withDiskMutationModule(
-    setupRoutesPath,
+    profilePath,
     (source) => source.replace(
-      "  if (typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME.trim() !== '') {",
-      '  if (false) { // MUTATION DSH_HOME branch removed',
+      'names = fs.readdirSync(profilesDir)',
+      'names = [] // MUTATION profile scan removed',
     ),
-    (mod) => assertResolvesWebProfile(mod.currentPatchFile),
+    (mod) => assertResolvesWebProfile(mod.resolvePatchFile),
   )
 })
 
