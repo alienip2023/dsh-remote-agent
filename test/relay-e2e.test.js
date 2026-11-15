@@ -527,6 +527,34 @@ test('relay：同 nodeId 旧连接还活着时第二个被 duplicate-node 拒绝
   assert.ok(srv.events.some((e) => e.msg === 'duplicate node rejected' && e.nodeId === 'node-dup'))
 })
 
+test('relay：旧槽探测未完成时，新连接的下一帧不得得到 unauthorized', async (t) => {
+  const srv = await startRelay(t, { duplicateProbeMs: 400 })
+  t.after(() => srv.close())
+
+  const first = await connectNode(srv.base, 'node-hold', { t })
+  await waitFor(() => srv.relay.nodes.size === 1, { label: 'first node online' })
+  // 旧槽还活着，探测窗口内会回 pong。窗口必须盖住「hello 之后立刻再发一帧」。
+  const second = await connectRaw(
+    `${srv.base}?role=node&token=${encodeURIComponent(ENROLL_TOKEN)}&nodeId=node-hold`,
+    'probe-next-frame',
+    t,
+  )
+  second.conn.send(encodeFrame(envelope(RELAY_FRAME.HELLO_NODE, {
+    nodeId: 'node-hold', protocol: PROTOCOL_VERSION, os: 'windows', hostname: 'node-hold',
+  })))
+  second.conn.send(encodeFrame(envelope('ping', { time: 1 })))
+
+  const dup = await waitRelayError(second.frames, 'duplicate-node')
+  assert.equal(dup.d.nodeId, 'node-hold')
+  assert.equal(
+    second.frames.some((f) => f.t === RELAY_FRAME.ERROR && f.d?.code === 'unauthorized'),
+    false,
+    '探测窗口里的后续帧不能被判成没握手',
+  )
+  assert.equal(first.conn.closed, false, '旧槽还活着，不能被拆')
+  assert.equal(srv.relay.nodes.get('node-hold').conn.closed, false)
+})
+
 test('relay：同 nodeId 旧连接不回 pong 则换槽，hub 收到 node/online', async (t) => {
   const srv = await startRelay(t, { duplicateProbeMs: 80 })
   t.after(() => srv.close())

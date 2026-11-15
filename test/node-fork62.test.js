@@ -164,6 +164,28 @@ function startNode(srv, nodeId, t) {
   return { tr, rec }
 }
 
+test('S62-probe-frame: a frame sent while the old slot is still being probed must not fatal-stop the new node', async (t) => {
+  const srv = await startRelay(t)
+  await holdNodeId(srv, 'node-probe', t, { stuck: false })
+  // 在真实 NodeTransport 的 hello 之后立刻补一帧。心跳自己要 15s，打不进 1s 窗口。
+  const { tr, rec } = startNode(srv, 'node-probe', t)
+  const origSend = tr.sendRaw.bind(tr)
+  let armed = false
+  tr.sendRaw = (type, data, opts) => {
+    const ok = origSend(type, data, opts)
+    if (!armed && type === RELAY_FRAME.HELLO_NODE) {
+      armed = true
+      origSend('ping', { time: 1 })
+    }
+    return ok
+  }
+  await waitFor(() => rec.reconnecting.length >= 1 || rec.fatal.length >= 1, 'duplicate retry or fatal', 4000)
+  await new Promise((r) => setTimeout(r, 250))
+  assert.equal(rec.fatal.filter((f) => f.code === 'unauthorized').length, 0, `unauthorized must not stop the node: ${JSON.stringify(rec.fatal)}`)
+  assert.equal(tr.stopped, false)
+  assert.ok(rec.reconnecting.some((r) => r.reason === 'duplicate-node'), `a live old slot is still duplicate-node: ${JSON.stringify(rec)}`)
+})
+
 test('S62-evict: a dead old connection is replaced on the next hello, without waiting out the idle sweep', async (t) => {
   const srv = await startRelay(t)
   const started = Date.now()
