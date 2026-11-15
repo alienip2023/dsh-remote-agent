@@ -1098,3 +1098,47 @@ test('RelayLink：中继整体消失后进入退避重连', async (t) => {
   assert.equal(link.ready, false)
   assert.ok(link.timer !== undefined, '退避 timer 已排定')
 })
+
+test('RelayLink：采纳后按 heartbeatMs ping，stop 清掉定时器', async (t) => {
+  const srv = await startRelay(t)
+  t.after(() => closeRelay(srv))
+  const { link } = makeLink(srv.base, { heartbeatMs: 40 })
+  t.after(() => link.stop())
+  link.start()
+  await waitFor(() => link.ready, { label: 'ready' })
+  assert.ok(link.hbTimer, '采纳后挂上心跳定时器')
+  const pings = []
+  const orig = link.conn.ping.bind(link.conn)
+  link.conn.ping = () => {
+    pings.push(Date.now())
+    return orig()
+  }
+  await waitFor(() => pings.length >= 1, { label: 'heartbeat pinged the adopted connection', timeoutMs: 1500 })
+  link.stop()
+  assert.equal(link.hbTimer, undefined, 'stop 清掉心跳定时器')
+  const n = pings.length
+  await sleep(120)
+  assert.equal(pings.length, n, 'stop 之后不再 ping')
+})
+
+test('RelayLink：旧连接的心跳定时器不能打到新连接', async (t) => {
+  const srv = await startRelay(t)
+  t.after(() => closeRelay(srv))
+  const { link } = makeLink(srv.base, { heartbeatMs: 30, reconnectMs: 40 })
+  t.after(() => link.stop())
+  link.start()
+  await waitFor(() => link.ready, { label: 'ready' })
+  const first = link.conn
+  const firstTimer = link.hbTimer
+  first.socket.destroy()
+  await waitFor(() => link.ready && link.conn !== first, { label: 'reconnected', timeoutMs: 4000 })
+  assert.notEqual(link.hbTimer, firstTimer, '新连接有自己的定时器')
+  const pings = []
+  const orig = link.conn.ping.bind(link.conn)
+  link.conn.ping = () => {
+    pings.push(link.conn)
+    return orig()
+  }
+  await waitFor(() => pings.length >= 1, { label: 'new conn pinged', timeoutMs: 1500 })
+  assert.ok(pings.every((c) => c === link.conn), '心跳只打当前连接')
+})

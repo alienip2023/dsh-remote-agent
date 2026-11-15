@@ -93,7 +93,7 @@ function httpRequest(port, { method = 'GET', path = '/', body, headers = {} } = 
 }
 
 /** 起一个真中继，随机端口。 */
-function startRelay(t) {
+function startRelay(t, extra = {}) {
   const events = []
   const relay = createRelay({
     port: 0,
@@ -101,6 +101,7 @@ function startRelay(t) {
     hubToken: HUB_TOKEN,
     enrollToken: ENROLL_TOKEN,
     onEvent: (e) => events.push(e),
+    ...extra,
   })
   return new Promise((resolve) => {
     relay.listen(() => {
@@ -498,7 +499,7 @@ test('relay：一次性 token 绑定 nodeId，别的 nodeId 被拒', async (t) =
 
 /* ─────────────────────────── 重复 nodeId ─────────────────────────── */
 
-test('relay：同 nodeId 第二个连接被 duplicate-node 拒绝，第一个仍在', async (t) => {
+test('relay：同 nodeId 旧连接还活着时第二个被 duplicate-node 拒绝，第一个仍在', async (t) => {
   const srv = await startRelay(t)
   t.after(() => srv.close())
 
@@ -524,6 +525,75 @@ test('relay：同 nodeId 第二个连接被 duplicate-node 拒绝，第一个仍
   assert.equal(up.d.phase, 'alive')
 
   assert.ok(srv.events.some((e) => e.msg === 'duplicate node rejected' && e.nodeId === 'node-dup'))
+})
+
+test('relay：同 nodeId 旧连接不回 pong 则换槽，hub 收到 node/online', async (t) => {
+  const srv = await startRelay(t, { duplicateProbeMs: 80 })
+  t.after(() => srv.close())
+
+  const hub = await connectHub(srv.base, t)
+  const first = await connectNode(srv.base, 'node-swap', { t })
+  await waitFor(() => srv.relay.nodes.size === 1, { label: 'first node online' })
+  await waitFrame(hub.frames, RELAY_FRAME.NODE_ONLINE)
+  const oldRec = srv.relay.nodes.get('node-swap')
+  // 死进程：不再读 socket，中继的探测 ping 得不到 pong。
+  first.conn.socket.pause()
+  hub.frames.length = 0
+
+  const second = await connectNode(srv.base, 'node-swap', { t })
+  const accepted = await waitFrame(second.frames, RELAY_FRAME.HELLO_NODE)
+  assert.equal(accepted.d.accepted, true)
+  assert.equal(accepted.d.nodeId, 'node-swap')
+
+  const online = await waitFrame(hub.frames, RELAY_FRAME.NODE_ONLINE)
+  assert.equal(online.d.node.nodeId, 'node-swap')
+  await waitFor(() => oldRec.conn.closed === true, { label: 'old slot closed' })
+  assert.equal(srv.relay.nodes.get('node-swap').conn.closed, false)
+  assert.notEqual(srv.relay.nodes.get('node-swap'), oldRec)
+  assert.equal(
+    srv.events.some((e) => e.msg === 'duplicate node rejected' && e.nodeId === 'node-swap'),
+    false,
+    '换槽不打 duplicate node rejected',
+  )
+})
+
+test('relay：只发心跳、不派任务的 hub，模拟超过 idleMs 不得被踢', async (t) => {
+  const idleMs = 1000
+  const srv = await startRelay(t, { idleMs, sweepMs: 0 })
+  t.after(() => srv.close())
+
+  const hub = await connectHub(srv.base, t)
+  await waitFor(() => srv.relay.hubs.size === 1, { label: 'hub attached' })
+  const serverConn = [...srv.relay.hubs][0]
+  const seen = Date.now()
+  // 假时间：第一次超 idleMs 只 ping。
+  assert.deepEqual(srv.relay.sweepIdle(seen + idleMs), { nodes: 0, hubs: 0 })
+  assert.equal(srv.relay.hubs.size, 1)
+  await waitFor(() => hub.raw.some((m) => m.isBinary === false) || true, { label: 'ping round-trip', timeoutMs: 1000 })
+  await new Promise((r) => setTimeout(r, 50))
+  // 有 pong 就把探测标记清掉。再过一个 idleMs 仍只 ping，不拆。
+  assert.deepEqual(srv.relay.sweepIdle(seen + idleMs * 3), { nodes: 0, hubs: 0 })
+  assert.equal(serverConn.closed, false)
+  assert.equal(hub.conn.closed, false)
+  assert.equal(srv.events.some((e) => e.msg === 'hub evicted: idle timeout'), false)
+})
+
+test('relay：hub 空闲 ping 之后再过一个 idleMs 仍无 pong 才拆', async (t) => {
+  const idleMs = 1000
+  const srv = await startRelay(t, { idleMs, sweepMs: 0 })
+  t.after(() => srv.close())
+
+  const hub = await connectHub(srv.base, t)
+  await waitFor(() => srv.relay.hubs.size === 1, { label: 'hub attached' })
+  hub.conn.socket.pause()
+  const t0 = Date.now()
+  assert.deepEqual(srv.relay.sweepIdle(t0 + idleMs), { nodes: 0, hubs: 0 })
+  assert.equal(srv.relay.hubs.size, 1, '第一次只 ping')
+  assert.deepEqual(srv.relay.sweepIdle(t0 + idleMs * 2 - 1), { nodes: 0, hubs: 0 })
+  assert.equal(srv.relay.hubs.size, 1, '未满第二个 idleMs 不拆')
+  assert.deepEqual(srv.relay.sweepIdle(t0 + idleMs * 2), { nodes: 0, hubs: 1 })
+  assert.equal(srv.relay.hubs.size, 0)
+  assert.ok(srv.events.some((e) => e.msg === 'hub evicted: idle timeout'))
 })
 
 test('relay：hello/node 的 nodeId 非法 → node-id-invalid 并关闭', async (t) => {

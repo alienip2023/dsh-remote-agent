@@ -121,7 +121,7 @@ const scaledConfig = () => ({ baseMs: 20, maxMs: 40, totalMs: Math.round(DUPLICA
 
 function startRelay(t) {
   const events = []
-  const relay = createRelay({ port: 0, host: '127.0.0.1', hubToken: HUB_TOKEN, enrollToken: ENROLL_TOKEN, idleMs: IDLE_MS, sweepMs: SWEEP_MS, onEvent: (e) => events.push({ ...e, at: Date.now() }) })
+  const relay = createRelay({ port: 0, host: '127.0.0.1', hubToken: HUB_TOKEN, enrollToken: ENROLL_TOKEN, idleMs: IDLE_MS, sweepMs: SWEEP_MS, duplicateProbeMs: 40, onEvent: (e) => events.push({ ...e, at: Date.now() }) })
   return new Promise((resolve) => {
     relay.listen(() => {
       const srv = {
@@ -164,22 +164,21 @@ function startNode(srv, nodeId, t) {
   return { tr, rec }
 }
 
-test('S62-evict: with the default-ratio budget the node comes online after the relay evicts a dead old connection', async (t) => {
+test('S62-evict: a dead old connection is replaced on the next hello, without waiting out the idle sweep', async (t) => {
   const srv = await startRelay(t)
   const started = Date.now()
   await holdNodeId(srv, 'node-evict', t, { stuck: true })
   const { tr, rec } = startNode(srv, 'node-evict', t)
 
-  await waitFor(() => rec.online === 1, 'online after eviction', 10_000)
-  const evicted = srv.events.find((e) => e.msg === 'node evicted: idle timeout')
-  assert.ok(evicted, 'the real relay evicted the dead holder (idle sweep), nobody closed it')
-  const evictedAfter = evicted.at - started
-  // premise: the old 120s-ratio budget would already have been spent by then, so this test can tell the two defaults apart
-  const oldBudget = Math.round(120_000 * SCALE)
-  assert.ok(evictedAfter > oldBudget, `eviction at ${evictedAfter}ms is later than the old 120s-ratio budget (${oldBudget}ms)`)
+  await waitFor(() => rec.online === 1, 'online after the dead holder is replaced', 10_000)
+  const onlineAfter = Date.now() - started
   assert.equal(tr.stopped, false)
   assert.deepEqual(rec.fatal, [], 'no fatal on the way')
-  assert.ok(rec.reconnecting.filter((r) => r.reason === 'duplicate-node').length >= 2, 'it really retried while the dead record was alive')
+  // 死槽不再一直拒到 idle 淘汰：中继先探测，不回 pong 就换槽。
+  // 在线必须早于「探测之后再等一个 idle 窗口才拆」的旧路径。
+  assert.ok(onlineAfter < 400, `online at ${onlineAfter}ms, before one idle window`)
+  assert.equal(srv.events.some((e) => e.msg === 'node evicted: idle timeout' && e.nodeId === 'node-evict'), false, 'the dead holder was replaced, not swept')
+  assert.equal(rec.reconnecting.filter((r) => r.reason === 'duplicate-node').length, 0, 'a dead holder is replaced, not rejected')
   assert.equal(srv.relay.nodes.has('node-evict'), true)
 })
 
