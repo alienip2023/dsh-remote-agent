@@ -585,6 +585,75 @@ test('relay：同 nodeId 旧连接不回 pong 则换槽，hub 收到 node/online
   )
 })
 
+test('node-flap: eight serial stale-slot replacements refresh hello without false offline', async (t) => {
+  const srv = await startRelay(t, { duplicateProbeMs: 100, sweepMs: 0 })
+  t.after(() => srv.close())
+  const hub = await connectHub(srv.base, t)
+  const ids = Array.from({ length: 8 }, (_, i) => `wave-${i}`)
+  const originals = new Map()
+  for (const id of ids) {
+    const node = await connectNode(srv.base, id, { t, helloExtra: { nonce: `old-${id}` } })
+    await waitFor(() => srv.relay.nodes.has(id))
+    originals.set(id, srv.relay.nodes.get(id))
+    node.conn.socket.pause() // old TCP slot remains; no pong arrives during the probe
+  }
+  await waitFor(() => hub.frames.filter((f) => f.t === RELAY_FRAME.NODE_ONLINE).length === 8)
+  hub.frames.length = 0
+
+  for (const id of ids) {
+    const next = await connectNode(srv.base, id, { t, helloExtra: { nonce: `new-${id}` } })
+    await waitFrame(next.frames, RELAY_FRAME.HELLO_NODE)
+    assert.equal(originals.get(id).conn.closed, true)
+    // One hello must never replace any of the other seven slots.
+    for (const other of ids.slice(ids.indexOf(id) + 1)) {
+      assert.equal(srv.relay.nodes.get(other), originals.get(other))
+      assert.equal(originals.get(other).conn.closed, false)
+    }
+    next.conn.send(encodeFrame(envelope('wave/ready', { nodeId: id })))
+    await waitFor(() => hub.frames.some((f) => f.t === 'wave/ready' && f.from === id))
+  }
+  const refreshes = hub.frames.filter((f) => f.t === RELAY_FRAME.NODE_ONLINE)
+  assert.deepEqual(refreshes.map((f) => f.d.node.nodeId), ids)
+  assert.deepEqual(refreshes.map((f) => f.d.node.nonce), ids.map((id) => `new-${id}`))
+  assert.equal(srv.events.filter((e) => e.error === 'replaced').length, 8, 'real socket replacements remain observable')
+  assert.equal(hub.frames.filter((f) => f.t === RELAY_FRAME.NODE_OFFLINE).length, 0,
+    'an accepted successor makes replacement an atomic refresh, not eight outages')
+
+  // A later real disconnect must still produce exactly one offline for that node.
+  srv.relay.nodes.get(ids[0]).conn.destroy()
+  await waitFor(() => hub.frames.some((f) => f.t === RELAY_FRAME.NODE_OFFLINE))
+  assert.deepEqual(hub.frames.filter((f) => f.t === RELAY_FRAME.NODE_OFFLINE).map((f) => f.d.nodeId), [ids[0]])
+})
+
+test('node-flap: idle hub eviction and hub reconnect leave all eight node slots intact', async (t) => {
+  const srv = await startRelay(t, { idleMs: 180_000, sweepMs: 0 })
+  t.after(() => srv.close())
+  const hub = await connectHub(srv.base, t)
+  hub.conn.socket.pause()
+  const originals = new Map()
+  for (let i = 0; i < 8; i += 1) {
+    const id = `hub-idle-${i}`
+    await connectNode(srv.base, id, { t })
+    await waitFor(() => srv.relay.nodes.has(id))
+    originals.set(id, srv.relay.nodes.get(id))
+  }
+  const now = Date.now() + 180_001
+  // Keep nodes live while only the hub fails its liveness probe.
+  for (const rec of originals.values()) rec.lastSeen = now
+  assert.deepEqual(srv.relay.sweepIdle(now), { nodes: 0, hubs: 0 })
+  for (const rec of originals.values()) rec.lastSeen = now + 180_000
+  assert.deepEqual(srv.relay.sweepIdle(now + 180_000), { nodes: 0, hubs: 1 })
+  const nextHub = await connectHub(srv.base, t)
+  nextHub.conn.send(encodeFrame(envelope(RELAY_FRAME.NODE_LIST, {})))
+  const list = await waitFrame(nextHub.frames, RELAY_FRAME.NODE_LIST)
+  assert.equal(list.d.nodes.length, 8)
+  for (const [id, rec] of originals) {
+    assert.equal(srv.relay.nodes.get(id), rec)
+    assert.equal(rec.conn.closed, false)
+  }
+  assert.equal(srv.events.some((e) => e.error === 'replaced' || e.msg === 'node offline'), false)
+})
+
 test('stability: pending hello replays text and binary uplinks in order after replacement', async (t) => {
   const srv = await startRelay(t, { duplicateProbeMs: 80 })
   t.after(() => srv.close())

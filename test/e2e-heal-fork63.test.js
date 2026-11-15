@@ -46,8 +46,8 @@ function helloFor(nodeId) {
   return { nodeId, protocol: PROTOCOL_VERSION, os: 'linux', arch: 'x64', hostname: nodeId, shells: ['bash'], roots: ['/tmp'], caps: ['exec'], profile: '', agentMode: true, time: Date.now() }
 }
 
-function startRelay(t) {
-  const relay = createRelay({ port: 0, host: '127.0.0.1', hubToken: HUB_TOKEN, enrollToken: ENROLL_TOKEN })
+function startRelay(t, options = {}) {
+  const relay = createRelay({ port: 0, host: '127.0.0.1', hubToken: HUB_TOKEN, enrollToken: ENROLL_TOKEN, ...options })
   return new Promise((resolve) => {
     relay.listen(() => {
       const port = relay.address().port
@@ -152,6 +152,73 @@ async function startOldNode(srv, nodeId, t) {
 
 const gaps = (ts) => ts.slice(1).map((x, i) => x - ts[i])
 const inRange = (v, lo, hi) => v >= lo && v <= hi
+
+test('node-flap: atomic replacement still verifies identity and rekeys the real hub session', async (t) => {
+  const srv = await startRelay(t, { duplicateProbeMs: 40 })
+  const { hub, node: old } = await establishedPair(srv, t, 'atomic-e2e')
+  const oldSession = old.tr.e2e
+  const oldSlot = srv.relay.nodes.get(old.nodeId)
+  const offline = []
+  const markOffline = hub.registry.markOffline.bind(hub.registry)
+  hub.registry.markOffline = (id, reason) => { offline.push({ id, reason }); return markOffline(id, reason) }
+  old.tr.conn.socket.pause()
+
+  const next = startNode(srv, old.nodeId, t)
+  next.tr.pinnedFingerprint = ID.fingerprint
+  await waitFor(() => next.tr.e2e && hub.registry.hasE2E(old.nodeId), 'successor E2E session')
+  assert.equal(oldSlot.conn.closed, true)
+  assert.notEqual(next.tr.e2e, oldSession)
+  assert.equal(next.tr.hubIdentity, 'ok')
+  assert.equal(next.tr.identityPeer.fp, ID.fingerprint)
+  assert.notEqual(next.tr.hello.nonce, old.tr.hello.nonce)
+  hub.registry.send(old.nodeId, 'wave/secure', { value: 'new-session' })
+  await waitFor(() => next.rec.frames.some((f) => f.t === 'wave/secure' && f.d.value === 'new-session'), 'encrypted successor downlink')
+  assert.deepEqual(offline, [], 'a successful same-slot replacement must not mark the hub record offline')
+})
+
+test('node-flap: eight nodes retry missing E2E ACKs without reconnecting their relay sockets', async (t) => {
+  const srv = await startRelay(t)
+  const nodes = []
+  for (let i = 0; i < 8; i += 1) {
+    nodes.push(startNode(srv, `no-ack-${i}`, t, { ackTimeoutMs: 30, retryBaseMs: 30, retryMaxMs: 60 }))
+  }
+  await waitFor(() => nodes.every((n) => n.tr.online), 'eight nodes accepted without a hub')
+  const slots = nodes.map((n) => srv.relay.nodes.get(n.nodeId))
+  await waitFor(() => nodes.every((n) => n.count('timeout') >= 2), 'two ACK timeouts on every node')
+  for (const [i, node] of nodes.entries()) {
+    assert.equal(node.rec.online, 1)
+    assert.equal(srv.relay.nodes.get(node.nodeId), slots[i])
+    assert.equal(slots[i].conn.closed, false)
+    assert.equal(node.tr.online, true)
+    assert.deepEqual(node.rec.e2e.filter((e) => e.status === 'timeout').slice(0, 2).map((e) => e.info), [
+      { attempt: 1, delayMs: 30 }, { attempt: 2, delayMs: 60 },
+    ])
+  }
+})
+
+test('node-flap: real hub reconnect and directory replay preserve all eight node sockets and sessions', async (t) => {
+  const srv = await startRelay(t)
+  const hub = startHub(srv, t, { heal: OFF })
+  const nodes = Array.from({ length: 8 }, (_, i) => startNode(srv, `hub-rejoin-${i}`, t))
+  await waitFor(() => nodes.every((n) => n.tr.e2e), 'eight authenticated sessions')
+  const slots = nodes.map((n) => srv.relay.nodes.get(n.nodeId))
+  const sessions = nodes.map((n) => n.tr.e2e)
+  const offers = nodes.map((n) => n.rec.offers.length)
+  hub.link.stop()
+  await waitFor(() => srv.relay.hubs.size === 0, 'hub disconnected')
+  hub.logs.length = 0
+  hub.link.start()
+  await waitFor(() => hub.logs.some((e) => e.msg === 'relay node directory received' && e.meta.count === 8), 'directory replay after reconnect')
+  for (const node of nodes) hub.registry.send(node.nodeId, 'wave/after-hub', { value: node.nodeId })
+  await waitFor(() => nodes.every((n) => n.rec.frames.some((f) => f.t === 'wave/after-hub' && f.d.value === n.nodeId)), 'encrypted downlinks after hub reconnect')
+  for (const [i, node] of nodes.entries()) {
+    assert.equal(srv.relay.nodes.get(node.nodeId), slots[i])
+    assert.equal(node.tr.e2e, sessions[i])
+    assert.equal(node.rec.online, 1)
+    assert.equal(node.rec.offers.length, offers[i])
+    assert.equal(node.tr.hubIdentity, 'ok')
+  }
+})
 
 /** Establish a session the normal way: hub up, node connects, offer/ack. */
 async function establishedPair(srv, t, nodeId, o = {}) {
