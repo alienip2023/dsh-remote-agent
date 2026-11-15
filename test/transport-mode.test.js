@@ -101,14 +101,14 @@ test('applyPair 设置 transportMode 并更新提示', () => {
 
 /* ── 6. 中文化显示 ────────────────────────────────────────────────── */
 
-test('节点卡片 transportMode 显示中文（中继/直连）', () => {
+test('节点卡片 transportMode 显示中文（直连/中继/未知）', () => {
   // 锚到 NodeCard 徽标行，不是 Worker 视图信息行
   const ncIdx = code.indexOf('function NodeCard(')
   assert.ok(ncIdx >= 0, 'NodeCard 函数应存在')
   const ncSeg = code.slice(ncIdx, ncIdx + 800)
   // 徽标应含 transportMode 中文显示
-  assert.match(ncSeg, /n\.transportMode === 'direct' \? '直连' : '中继'/,
-    'NodeCard 徽标应按 transportMode 显示中文「直连/中继」')
+  assert.match(ncSeg, /n\.transportMode === 'direct' \? '直连' : n\.transportMode === 'relay' \? '中继' : '未知'/,
+    'NodeCard 徽标应按 transportMode 显示中文，缺失时显示「未知」')
 })
 
 /* ── 7. setup-routes 放开 hub ──────────────────────────────────────── */
