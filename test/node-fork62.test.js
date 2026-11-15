@@ -204,20 +204,20 @@ test('S62-evict: a dead old connection is replaced on the next hello, without wa
   assert.equal(srv.relay.nodes.has('node-evict'), true)
 })
 
-test('S62-evict-budget: a holder that stays healthy exhausts the same scaled budget — the node stops with the original fatal after about that long', async (t) => {
+test('S62-evict-budget: after the scaled budget, a healthy holder is preserved and retries continue at a slower cadence', async (t) => {
   const srv = await startRelay(t)
   await holdNodeId(srv, 'node-live', t, { stuck: false }) // answers pings, never evicted
   const cfg = scaledConfig()
   const started = Date.now()
   const { tr, rec } = startNode(srv, 'node-live', t)
 
-  await waitFor(() => rec.fatal.length === 1, 'fatal once the budget is spent', 10_000)
+  await waitFor(() => rec.reconnecting.some((r) => r.delayMs >= cfg.totalMs), 'cooldown once the budget is spent', 10_000)
   const elapsed = Date.now() - started
-  assert.equal(rec.fatal[0].code, 'duplicate-node')
-  assert.equal(tr.stopped, true)
+  assert.deepEqual(rec.fatal, [])
+  assert.equal(tr.stopped, false)
   assert.equal(rec.online, 0)
   // planned waits sum to at most the budget, the last one that would not fit ended it; real time is at least the planned sum
-  assert.ok(elapsed >= cfg.totalMs - cfg.maxMs, `stopped after ${elapsed}ms, budget ${cfg.totalMs}ms`)
+  assert.ok(elapsed >= cfg.totalMs - cfg.maxMs, `cooldown after ${elapsed}ms, budget ${cfg.totalMs}ms`)
 })
 
 /* ───────── 3. identity stops now say why (a whitelisted code, no detail) ───────── */
@@ -283,4 +283,155 @@ test('S62-fatal-unaffected: a transient identity-less welcome (no pin configured
   tr.handleFrame({ t: 'welcome', d: { identity: undefined } })
   assert.equal(tr.stopped, false)
   assert.deepEqual(fatal, [])
+})
+
+test('stability: repeated start while connected keeps one node connection and heartbeat', async (t) => {
+  const srv = await startRelay(t)
+  const { tr, rec } = startNode(srv, 'start-once', t)
+  await waitFor(() => rec.online === 1, 'first online')
+  const conn = tr.conn
+  const timer = tr.hbTimer
+  tr.start()
+  await tr.connectOnce()
+  await new Promise((r) => setTimeout(r, 150))
+  assert.equal(tr.conn, conn)
+  assert.equal(tr.hbTimer, timer)
+  assert.equal(rec.reconnecting.length, 0)
+  assert.equal(srv.relay.nodes.size, 1)
+})
+
+test('stability: node recovers after close 1006 and ignores stale connection frames', async (t) => {
+  const srv = await startRelay(t)
+  const { tr, rec } = startNode(srv, 'recover-1006', t)
+  await waitFor(() => rec.online === 1, 'first online')
+  const old = tr.conn
+  const timer = tr.hbTimer
+  const offline = []
+  tr.on('offline', (reason) => offline.push(reason))
+  srv.relay.nodes.get('recover-1006').conn.socket.destroy()
+  await waitFor(() => rec.online === 2, 'online after 1006')
+  assert.notEqual(tr.conn, old)
+  assert.notEqual(tr.hbTimer, timer)
+  assert.match(offline[0], /^closed 1006\b/)
+  assert.equal(timer._destroyed, true)
+  const pongAt = tr.lastPongAt
+  old.emit('pong')
+  old.emit('message', Buffer.from(encodeFrame(envelope('error', { code: 'revoked' }))), false)
+  assert.equal(tr.lastPongAt, pongAt)
+  assert.equal(tr.stopped, false)
+  assert.deepEqual(rec.fatal, [])
+  tr.stop()
+  assert.equal(tr.hbTimer, undefined)
+  assert.equal(tr.timer, undefined)
+})
+
+test('stability: a real bad relay token is immediately fatal at HTTP upgrade', async (t) => {
+  const srv = await startRelay(t)
+  const tr = new NodeTransport({ mode: 'relay', url: srv.base, token: newRelayToken('bad'), hello: helloFor('bad-token'), e2e: false })
+  const fatal = []
+  const retries = []
+  tr.on('error', () => {})
+  tr.on('fatal', (e) => fatal.push(e))
+  tr.on('reconnecting', (e) => retries.push(e))
+  t.after(() => tr.stop())
+  tr.start()
+  await waitFor(() => fatal.length || retries.length, 'upgrade rejected')
+  assert.equal(tr.stopped, true)
+  assert.deepEqual(fatal, [{ code: 'unauthorized', attempts: 0 }])
+  assert.deepEqual(retries, [])
+})
+
+test('stability: pinned node reconnects after identity timeout and verifies the same hub', async (t) => {
+  const srv = await startRelay(t)
+  const id = generateIdentity()
+  let writes = 0
+  let clears = 0
+  const tr = new NodeTransport({
+    mode: 'relay', url: srv.base, token: ENROLL_TOKEN, hello: helloFor('identity-recover'), e2e: false,
+    identityGraceMs: 60,
+    pinStore: { get: () => ({ fingerprint: id.fingerprint }), set: () => { writes += 1; return true }, clear: () => { clears += 1 } },
+  })
+  const fatal = []
+  const retries = []
+  tr.on('error', () => {})
+  tr.on('fatal', (e) => fatal.push(e))
+  tr.on('reconnecting', (e) => retries.push(e))
+  t.after(() => tr.stop())
+  tr.start()
+  await waitFor(() => retries.length || fatal.length, 'identity timeout')
+  assert.equal(tr.stopped, false)
+  assert.equal(tr.online, false, 'unverified connection is closed at the original deadline')
+  assert.equal(tr.hubIdentity, 'pending')
+  const hub = await connect(`${srv.base}?role=hub`, { headers: { 'x-relay-token': HUB_TOKEN } })
+  hub.on('error', () => {})
+  t.after(() => hub.socket.destroy())
+  hub.on('message', (payload) => {
+    const frame = JSON.parse(payload)
+    if (frame.t !== RELAY_FRAME.NODE_ONLINE) return
+    const { nodeId, nonce } = frame.d.node
+    const at = Date.now()
+    hub.send(encodeFrame({ ...envelope('hub/identity', {
+      fp: id.fingerprint, pub: id.publicKeyB64, nonce, at,
+      sig: signIdentity(id.privateKeyB64, { fingerprint: id.fingerprint, nodeId, nonce, at }),
+    }), to: nodeId }))
+  })
+  await waitFor(() => tr.hubIdentity === 'ok', 'same pinned identity verified')
+  assert.equal(tr.online, true)
+  assert.equal(tr.identityGraceMs, 60)
+  assert.equal(writes, 0)
+  assert.equal(clears, 0)
+  assert.deepEqual(fatal, [])
+})
+
+test('stability: two hubs keep the pin boundary, including a conflicting signed identity', async (t) => {
+  const srv = await startRelay(t)
+  const trusted = generateIdentity()
+  const other = generateIdentity()
+  const a = await connect(`${srv.base}?role=hub`, { headers: { 'x-relay-token': HUB_TOKEN } })
+  const b = await connect(`${srv.base}?role=hub`, { headers: { 'x-relay-token': HUB_TOKEN } })
+  for (const hub of [a, b]) {
+    hub.on('error', () => {})
+    t.after(() => hub.socket.destroy())
+  }
+  const tr = new NodeTransport({ mode: 'relay', url: srv.base, token: ENROLL_TOKEN, hello: helloFor('dual-pin'), e2e: false, pinnedFingerprint: trusted.fingerprint })
+  tr.on('error', () => {})
+  const fatal = []
+  tr.on('fatal', (info) => fatal.push(info))
+  t.after(() => tr.stop())
+  tr.start()
+  await waitFor(() => tr.online, 'node accepted')
+  const sendIdentity = (hub, id) => {
+    const at = Date.now()
+    const nonce = tr.hello.nonce
+    hub.send(encodeFrame({ ...envelope('hub/identity', {
+      fp: id.fingerprint, pub: id.publicKeyB64, nonce, at,
+      sig: signIdentity(id.privateKeyB64, { fingerprint: id.fingerprint, nodeId: 'dual-pin', nonce, at }),
+    }), to: 'dual-pin' }))
+  }
+  sendIdentity(a, trusted)
+  await waitFor(() => tr.hubIdentity === 'ok', 'first trusted hub verified')
+  sendIdentity(b, trusted)
+  await new Promise((r) => setTimeout(r, 30))
+  assert.equal(tr.stopped, false, 'same identity replay from the second hub is harmless')
+  sendIdentity(b, other)
+  await waitFor(() => fatal.length === 1, 'conflicting second hub rejected')
+  assert.equal(tr.stopped, true)
+  assert.equal(tr.pinnedFingerprint, trusted.fingerprint)
+  assert.deepEqual(fatal, [{ code: 'hub-identity', attempts: 0 }])
+})
+
+test('stability: node heartbeat timeout replaces the socket and clears the old interval', async (t) => {
+  const srv = await startRelay(t)
+  const { tr, rec } = startNode(srv, 'heartbeat-recover', t)
+  tr.heartbeatMs = 20
+  await waitFor(() => rec.online === 1, 'first online')
+  const old = tr.conn
+  const timer = tr.hbTimer
+  old.socket.pause()
+  tr.lastPongAt = Date.now() - 46_000
+  await waitFor(() => rec.online === 2, 'recovered from missing pong')
+  assert.equal(timer._destroyed, true)
+  assert.notEqual(tr.conn, old)
+  assert.notEqual(tr.hbTimer, timer)
+  assert.deepEqual(rec.fatal, [])
 })

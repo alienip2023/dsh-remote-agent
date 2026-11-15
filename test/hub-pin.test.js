@@ -11,6 +11,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { EventEmitter } from 'node:events'
 
 import { generateIdentity, signIdentity } from '../lib/identity.js'
 import { clearHubPin, loadHubPin, saveHubPin } from '../lib/node/hub-pin.js'
@@ -196,15 +197,28 @@ test('failHubIdentity：大声报错 + 停止重连 + 保留 pin（不清除）'
 
 /* ───────────────────────── relay 宽限窗口 ───────────────────────── */
 
-test('relay 宽限：有 pin 但身份帧始终不来 → 超时拒绝并停止', async () => {
+test('relay 宽限：有 pin 但身份帧始终不来 → 仍待验证，不降级或删除 pin', async (ctx) => {
   const hub = makeHub()
   const store = memPinStore({ fingerprint: hub.id.fingerprint, endpoint: '' })
-  const { t, events } = makeTransport({ mode: 'relay', url: 'ws://relay.example:8890/relay', pinStore: store })
+  const { t, events } = makeTransport({ mode: 'relay', url: 'ws://127.0.0.1:8890/relay', pinStore: store })
+  ctx.after(() => t.stop())
+  const conn = new EventEmitter()
+  conn.closed = false
+  conn.send = () => true
+  conn.ping = () => {}
+  conn.destroy = () => { conn.closed = true; conn.emit('close', 1006, 'identity timeout') }
+  t.conn = conn
+  t.attach(conn)
   t.markOnline({ relay: true })
   t.armIdentityGrace()
   await new Promise((r) => setTimeout(r, 120))
-  assert.equal(t.stopped, true, '钉住的 hub 没证明自己 → 停止')
+  assert.equal(t.stopped, false, '身份缺席可重试，实际身份校验失败仍 fatal')
+  assert.equal(t.online, false, '原宽限截止时关闭未验证连接')
+  assert.equal(conn.closed, true)
+  assert.ok(t.timer, '连接关闭后排期重连')
   assert.equal(t.hubIdentity, 'pending', '失败不走 absent')
+  assert.equal(store.calls.cleared, 0)
+  assert.equal(store.calls.set, 0)
   assert.equal(events.error.length, 1)
 })
 

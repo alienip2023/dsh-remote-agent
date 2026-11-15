@@ -585,6 +585,143 @@ test('relay：同 nodeId 旧连接不回 pong 则换槽，hub 收到 node/online
   )
 })
 
+test('stability: pending hello replays text and binary uplinks in order after replacement', async (t) => {
+  const srv = await startRelay(t, { duplicateProbeMs: 80 })
+  t.after(() => srv.close())
+  const hub = await connectHub(srv.base, t)
+  const old = await connectNode(srv.base, 'pending-order', { t })
+  await waitFor(() => srv.relay.nodes.has('pending-order'))
+  old.conn.socket.pause()
+  const next = await connectNode(srv.base, 'pending-order', { t })
+  next.conn.send(encodeFrame(envelope('stability/first', {})))
+  next.conn.sendBinary(encodeBinaryFrame({ t: 'stability/binary' }, Buffer.from([0xff, 0, 0x80])))
+  next.conn.send(encodeFrame(envelope('stability/last', {})))
+  await waitFrame(next.frames, RELAY_FRAME.HELLO_NODE)
+  await waitFrame(hub.frames, 'stability/last')
+  const forwarded = hub.raw.filter((r) => r.isBinary || /stability\//.test(r.buf.toString()))
+  assert.equal(forwarded.length, 3)
+  assert.deepEqual(forwarded.map((r) => r.isBinary), [false, true, false])
+  const binary = decodeBinaryFrame(forwarded[1].buf)
+  assert.equal(binary.header.from, 'pending-order')
+  assert.deepEqual(binary.payload, Buffer.from([0xff, 0, 0x80]))
+})
+
+test('stability: pending hello cannot register a second id or leave a ghost slot', async (t) => {
+  const srv = await startRelay(t, { duplicateProbeMs: 80 })
+  t.after(() => srv.close())
+  const old = await connectNode(srv.base, 'pending-once', { t })
+  await waitFor(() => srv.relay.nodes.has('pending-once'))
+  const original = srv.relay.nodes.get('pending-once')
+  old.conn.socket.pause()
+  const next = await connectNode(srv.base, 'pending-once', { t })
+  next.conn.send(encodeFrame(envelope(RELAY_FRAME.HELLO_NODE, { nodeId: 'ghost-slot' })))
+  await waitRelayError(next.frames, 'already-helloed')
+  await new Promise((r) => setTimeout(r, 120))
+  assert.equal(srv.relay.nodes.has('ghost-slot'), false)
+  assert.equal(srv.relay.nodes.get('pending-once'), original)
+})
+
+test('stability: a full relay still probes an existing slot without admitting another id', async (t) => {
+  const srv = await startRelay(t, { maxNodes: 1, duplicateProbeMs: 50 })
+  t.after(() => srv.close())
+  const old = await connectNode(srv.base, 'full-slot', { t })
+  await waitFor(() => srv.relay.nodes.has('full-slot'))
+  const original = srv.relay.nodes.get('full-slot')
+  old.conn.socket.pause()
+  const next = await connectNode(srv.base, 'full-slot', { t })
+  await waitFrame(next.frames, RELAY_FRAME.HELLO_NODE)
+  assert.notEqual(srv.relay.nodes.get('full-slot'), original)
+  assert.equal(srv.relay.nodes.size, 1)
+  // The query id is a hint only; hello must not use it to bypass capacity.
+  const extra = await connectRaw(`${srv.base}?role=node&token=${encodeURIComponent(ENROLL_TOKEN)}&nodeId=full-slot`, 'capacity-hint', t)
+  extra.conn.send(encodeFrame(envelope(RELAY_FRAME.HELLO_NODE, { nodeId: 'other-slot' })))
+  await waitRelayError(extra.frames, 'relay-full')
+  assert.equal(srv.relay.nodes.size, 1)
+})
+
+test('stability: a completed stale probe cannot overwrite a newer accepted slot', async (t) => {
+  const srv = await startRelay(t, { duplicateProbeMs: 200 })
+  t.after(() => srv.close())
+  const old = await connectNode(srv.base, 'probe-race', { t })
+  await waitFor(() => srv.relay.nodes.has('probe-race'))
+  old.conn.socket.pause()
+  const first = await connectNode(srv.base, 'probe-race', { t })
+  first.conn.send(encodeFrame(envelope('stability/probing', {})))
+  await new Promise((r) => setTimeout(r, 30))
+  srv.relay.nodes.get('probe-race').conn.destroy()
+  const second = await connectNode(srv.base, 'probe-race', { t })
+  await waitFrame(second.frames, RELAY_FRAME.HELLO_NODE)
+  const winner = srv.relay.nodes.get('probe-race')
+  await waitRelayError(first.frames, 'duplicate-node')
+  assert.equal(srv.relay.nodes.get('probe-race'), winner)
+  assert.equal(winner.conn.closed, false)
+})
+
+for (const budget of ['frames', 'bytes']) {
+test(`stability: pending hello ${budget} backlog overflow closes instead of silently dropping frames`, async (t) => {
+  const srv = await startRelay(t, { duplicateProbeMs: 150 })
+  t.after(() => srv.close())
+  const old = await connectNode(srv.base, 'probe-overflow', { t })
+  await waitFor(() => srv.relay.nodes.has('probe-overflow'))
+  old.conn.socket.pause()
+  const next = await connectNode(srv.base, 'probe-overflow', { t })
+  const closed = new Promise((resolve) => next.conn.once('close', (code) => resolve(code)))
+  if (budget === 'frames') {
+    for (let i = 0; i < 33; i += 1) next.conn.send(encodeFrame(envelope('stability/queued', { i })))
+  } else {
+    next.conn.sendBinary(encodeBinaryFrame({ t: 'stability/queued' }, Buffer.alloc(1024 * 1024)))
+  }
+  assert.equal(await Promise.race([closed, new Promise((r) => setTimeout(() => r('timeout'), 1000))]), 1013)
+})
+}
+
+test('stability: node idle sweep waits the full probe window and emits offline once', async (t) => {
+  const srv = await startRelay(t, { idleMs: 100, sweepMs: 0 })
+  t.after(() => srv.close())
+  const hub = await connectHub(srv.base, t)
+  const node = await connectNode(srv.base, 'idle-once', { t })
+  await waitFrame(node.frames, RELAY_FRAME.HELLO_NODE)
+  const rec = srv.relay.nodes.get('idle-once')
+  node.conn.socket.pause()
+  // Epoch zero exercises the sentinel as well as the exact deadline.
+  rec.lastSeen = -100
+  assert.deepEqual(srv.relay.sweepIdle(0), { nodes: 0, hubs: 0 })
+  assert.deepEqual(srv.relay.sweepIdle(99), { nodes: 0, hubs: 0 })
+  assert.deepEqual(srv.relay.sweepIdle(100), { nodes: 1, hubs: 0 })
+  await waitFrame(hub.frames, RELAY_FRAME.NODE_OFFLINE)
+  await new Promise((r) => setTimeout(r, 30))
+  assert.equal(hub.frames.filter((f) => f.t === RELAY_FRAME.NODE_OFFLINE && f.d.nodeId === 'idle-once').length, 1)
+})
+
+test('stability: synchronous probe ping failure replaces the slot without leaking probe state', async (t) => {
+  const srv = await startRelay(t, { duplicateProbeMs: 50 })
+  t.after(() => srv.close())
+  await connectNode(srv.base, 'ping-throws', { t })
+  await waitFor(() => srv.relay.nodes.has('ping-throws'))
+  const old = srv.relay.nodes.get('ping-throws')
+  old.conn.ping = () => { throw new Error('local ping failure') }
+  const next = await connectNode(srv.base, 'ping-throws', { t })
+  await waitFrame(next.frames, RELAY_FRAME.HELLO_NODE)
+  assert.notEqual(srv.relay.nodes.get('ping-throws'), old)
+  assert.equal(old.conn.listenerCount('pong'), 1, 'only normal liveness listener remains')
+  const third = await connectNode(srv.base, 'ping-throws', { t })
+  await waitRelayError(third.frames, 'duplicate-node')
+  assert.equal(next.conn.closed, false)
+})
+
+test('stability: a healthy idle node answers pong and remains registered', async (t) => {
+  const srv = await startRelay(t, { idleMs: 100, sweepMs: 0 })
+  t.after(() => srv.close())
+  const node = await connectNode(srv.base, 'idle-healthy', { t })
+  await waitFrame(node.frames, RELAY_FRAME.HELLO_NODE)
+  const rec = srv.relay.nodes.get('idle-healthy')
+  srv.relay.sweepIdle(rec.lastSeen + 100)
+  await waitFor(() => rec.pingSentAt === undefined)
+  assert.deepEqual(srv.relay.sweepIdle(rec.lastSeen + 100), { nodes: 0, hubs: 0 })
+  assert.equal(srv.relay.nodes.get('idle-healthy'), rec)
+  assert.equal(node.conn.closed, false)
+})
+
 test('relay：只发心跳、不派任务的 hub，模拟超过 idleMs 不得被踢', async (t) => {
   const idleMs = 1000
   const srv = await startRelay(t, { idleMs, sweepMs: 0 })

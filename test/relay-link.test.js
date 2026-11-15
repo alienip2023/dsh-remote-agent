@@ -1142,3 +1142,22 @@ test('RelayLink：旧连接的心跳定时器不能打到新连接', async (t) =
   await waitFor(() => pings.length >= 1, { label: 'new conn pinged', timeoutMs: 1500 })
   assert.ok(pings.every((c) => c === link.conn), '心跳只打当前连接')
 })
+
+test('stability: RelayLink detects missing pong and reconnects after close 1006', async (t) => {
+  const srv = await startRelay(t)
+  const { link } = makeLink(srv.base, { heartbeatMs: 20, reconnectMs: 30 })
+  t.after(() => link.stop())
+  link.start()
+  await waitFor(() => link.ready)
+  const old = link.conn
+  const timer = link.hbTimer
+  old.socket.pause()
+  link.lastPongAt = Date.now() - 46_000
+  await waitFor(() => link.ready && link.conn !== old, { label: 'reconnected after heartbeat timeout', timeoutMs: 1500 })
+  assert.equal(old.closed, true)
+  assert.equal(timer._destroyed, true)
+  assert.notEqual(link.hbTimer, timer)
+  const pongAt = link.lastPongAt
+  old.emit('pong')
+  assert.equal(link.lastPongAt, pongAt)
+})
