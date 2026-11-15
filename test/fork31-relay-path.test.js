@@ -25,7 +25,7 @@ function forbiddenDesktopPatch() {
   return path.join(homedir(), '.dsh', 'profiles', 'desktop', 'cordis.patch.yml')
 }
 
-/** 同一条路径断言：临时 DSH_HOME 只有 profiles/web 时，必须命中该文件。 */
+/** 同一条路径断言：临时 DSH_HOME 显式指定 web 时，必须命中该文件。 */
 function assertResolvesWebProfile(resolvePatchFile) {
   const root = mkdtempSync(path.join(tmpdir(), 'fork31-dsh-home-'))
   const webFile = path.join(root, 'profiles', 'web', 'cordis.patch.yml')
@@ -35,7 +35,7 @@ function assertResolvesWebProfile(resolvePatchFile) {
   const prevProfile = process.env.DSH_PROFILE
   try {
     process.env.DSH_HOME = root
-    delete process.env.DSH_PROFILE
+    process.env.DSH_PROFILE = 'web'
     const got = resolvePatchFile()
     assert.strictEqual(got, webFile, '必须解析到 DSH_HOME/profiles/web/cordis.patch.yml')
     assert.notStrictEqual(got, forbiddenDesktopPatch(), '不得回落到 ~/.dsh/profiles/desktop/cordis.patch.yml')
@@ -105,16 +105,16 @@ async function withDiskMutationModule(filePath, mutate, run) {
   }
 }
 
-test('T1: 临时 DSH_HOME 只有 profiles/web 时解析到该文件', () => {
+test('T1: 临时 DSH_HOME 显式指定 web 时解析到该文件', () => {
   assertResolvesWebProfile(currentPatchFile)
 })
 
-test('M1: 关掉已安装 profile 扫描后同一条路径断言必须红', async () => {
+test('M1: 忽略显式 DSH_PROFILE 后同一条路径断言必须红', async () => {
   await withDiskMutationModule(
     profilePath,
     (source) => source.replace(
-      'names = fs.readdirSync(profilesDir)',
-      'names = [] // MUTATION profile scan removed',
+      "typeof env.DSH_PROFILE === 'string'",
+      'false // MUTATION explicit profile ignored',
     ),
     (mod) => assertResolvesWebProfile(mod.resolvePatchFile),
   )

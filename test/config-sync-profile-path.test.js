@@ -51,8 +51,9 @@ function worker(t) {
   return { home, sent, push, web: path.join(home, 'profiles', 'web') }
 }
 
-test('worker config push writes all three providers to installed web and persists revision in its home', async (t) => {
+test('worker config push writes all three providers to explicit web and persists revision in its home', async (t) => {
   const f = worker(t)
+  process.env.DSH_PROFILE = 'web'
   mkdirSync(path.join(f.web, 'node_modules', 'dsh-remote-agent'), { recursive: true })
   const patchFile = path.join(f.web, 'cordis.patch.yml')
   // Fail before dispatch on the old implementation, so it cannot touch a live home.

@@ -34,25 +34,27 @@ async function resolver() {
   return import('../lib/profile-path.js')
 }
 
-test('setup resolves web without DSH_PROFILE or a patch and never creates desktop', (t) => {
+test('setup resolves explicit web without a patch and never creates desktop', (t) => {
   const f = fixture(t)
   f.install('web')
   setDshEnv(t, f.home)
+  process.env.DSH_PROFILE = 'web'
   assert.equal(currentPatchFile(), path.join(f.profile('web'), 'cordis.patch.yml'))
   assert.equal(existsSync(f.profile('desktop')), false)
 })
 
-test('scanner requires the plugin installation, not an existing desktop patch', async (t) => {
+test('installed web and an existing desktop patch cannot identify the active profile', async (t) => {
   const f = fixture(t)
   f.install('web')
   mkdirSync(f.profile('desktop'))
   writeFileSync(path.join(f.profile('desktop'), 'cordis.patch.yml'), 'plugins: []\n')
   const { resolveProfileDir, resolvePatchFile } = await resolver()
-  assert.equal(resolveProfileDir(f.options), f.profile('web'))
-  assert.equal(resolvePatchFile(f.options), path.join(f.profile('web'), 'cordis.patch.yml'))
+  for (const resolve of [resolveProfileDir, resolvePatchFile]) {
+    assert.throws(() => resolve(f.options), { code: 'profile-unresolved' })
+  }
 })
 
-test('the actually loaded web installation wins over DSH_HOME scanning', async (t) => {
+test('the actually loaded web installation identifies the active profile despite another DSH_HOME', async (t) => {
   const f = fixture(t)
   const plugin = f.install('web')
   const lib = path.join(plugin, 'lib')
@@ -72,47 +74,68 @@ test('the actually loaded web installation wins over DSH_HOME scanning', async (
   assert.equal(installed.resolveProfileDir(), path.join(otherHome, 'profiles', 'headless'))
 })
 
-test('a sanitized explicit DSH_PROFILE wins over installation and scanning', async (t) => {
+test('a trimmed explicit DSH_PROFILE wins over the loaded installation', async (t) => {
   const f = fixture(t)
   const plugin = f.install('web')
   const { resolveProfileDir } = await resolver()
   assert.equal(resolveProfileDir({
     ...f.options,
-    env: { DSH_HOME: ` ${f.home} `, DSH_PROFILE: ' ../headless/ ' },
+    env: { DSH_HOME: ` ${f.home} `, DSH_PROFILE: ' headless-1.0_test ' },
     moduleUrl: pathToFileURL(path.join(plugin, 'lib', 'profile-path.js')).href,
-  }), f.profile('..headless'))
-  assert.equal(existsSync(f.profile('..headless')), false, 'resolution must be read-only')
+  }), f.profile('headless-1.0_test'))
+  assert.equal(existsSync(f.profile('headless-1.0_test')), false, 'resolution must be read-only')
 })
 
-for (const name of ['', '  ', '/! ', '.', '..']) {
-  test(`empty or unsafe profile ${JSON.stringify(name)} falls through to installed web`, async (t) => {
+for (const name of ['', '  ']) {
+  test(`empty profile ${JSON.stringify(name)} uses the loaded web installation`, async (t) => {
     const f = fixture(t)
-    f.install('web')
+    const plugin = f.install('web')
     const { resolveProfileDir } = await resolver()
-    assert.equal(resolveProfileDir({ ...f.options, env: { DSH_HOME: f.home, DSH_PROFILE: name } }), f.profile('web'))
+    assert.equal(resolveProfileDir({
+      ...f.options,
+      env: { DSH_HOME: f.home, DSH_PROFILE: name },
+      moduleUrl: pathToFileURL(path.join(plugin, 'lib', 'profile-path.js')).href,
+    }), f.profile('web'))
   })
 }
 
-for (const [names, expected] of [
-  [['headless', 'desktop', 'web'], 'web'],
-  [['headless', 'desktop'], 'desktop'],
-  [['zeta', 'alpha'], 'alpha'],
+for (const name of ['/! ', '.', '..', 'a/b', '../headless/']) {
+  test(`invalid profile ${JSON.stringify(name)} throws instead of changing the name or inferring a profile`, async (t) => {
+    const f = fixture(t)
+    const plugin = f.install('web')
+    f.install('ab')
+    const { resolveProfileDir } = await resolver()
+    assert.throws(() => resolveProfileDir({
+      ...f.options,
+      env: { DSH_HOME: f.home, DSH_PROFILE: name },
+      moduleUrl: pathToFileURL(path.join(plugin, 'lib', 'profile-path.js')).href,
+    }), { code: 'profile-unresolved' })
+  })
+}
+
+for (const names of [
+  ['desktop'],
+  ['headless', 'desktop', 'web'],
+  ['headless', 'desktop'],
+  ['zeta', 'alpha'],
 ]) {
-  test(`multiple installed profiles ${names.join(', ')} select ${expected}`, async (t) => {
+  test(`installed profiles ${names.join(', ')} without DSH_PROFILE or a loaded installation throw profile-unresolved`, async (t) => {
     const f = fixture(t)
     for (const name of names) f.install(name)
-    const { resolveProfileDir } = await resolver()
-    assert.equal(resolveProfileDir(f.options), f.profile(expected))
+    const { resolveProfileDir, resolvePatchFile } = await resolver()
+    for (const resolve of [resolveProfileDir, resolvePatchFile]) {
+      assert.throws(() => resolve(f.options), { code: 'profile-unresolved' })
+    }
   })
 }
 
-test('without DSH_HOME, scan the default home .dsh installation', async (t) => {
+test('without DSH_HOME, the default home .dsh still requires an explicit profile or loaded installation', async (t) => {
   const f = fixture(t)
   const dshHome = path.join(f.home, '.dsh')
   const web = path.join(dshHome, 'profiles', 'web')
   mkdirSync(path.join(web, 'node_modules', 'dsh-remote-agent'), { recursive: true })
   const { resolveProfileDir } = await resolver()
-  assert.equal(resolveProfileDir({ env: {}, homeDir: f.home }), web)
+  assert.throws(() => resolveProfileDir({ env: {}, homeDir: f.home }), { code: 'profile-unresolved' })
   assert.equal(resolveProfileDir({ env: { DSH_PROFILE: 'web' }, homeDir: f.home }), web)
 })
 
