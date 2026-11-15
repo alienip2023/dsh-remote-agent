@@ -142,13 +142,33 @@ const VALID_HELLO = {
 test('validateHello：接受合法输入并原样归一化', () => {
   const v = validateHello(VALID_HELLO)
   assert.equal(v.ok, true)
-  assert.deepEqual(v.hello, VALID_HELLO)
+  assert.deepEqual(v.hello, { ...VALID_HELLO, transportMode: undefined })
 
   for (const os of ['windows', 'linux', 'darwin']) {
     const r = validateHello({ ...VALID_HELLO, os })
     assert.equal(r.ok, true, os)
     assert.equal(r.hello.os, os)
   }
+})
+
+for (const transportMode of ['direct', 'relay']) {
+  test(`validateHello：保留 transportMode=${transportMode}`, () => {
+    const r = validateHello({ ...VALID_HELLO, transportMode })
+    assert.equal(r.ok, true)
+    assert.equal(r.hello.transportMode, transportMode)
+  })
+}
+
+test('validateHello：非法 transportMode 归一化为 undefined', () => {
+  const r = validateHello({ ...VALID_HELLO, transportMode: 'tunnel' })
+  assert.equal(r.ok, true)
+  assert.equal(r.hello.transportMode, undefined)
+})
+
+test('validateHello：缺失 transportMode 时为 undefined', () => {
+  const r = validateHello(VALID_HELLO)
+  assert.equal(r.ok, true)
+  assert.equal(r.hello.transportMode, undefined)
 })
 
 test('validateHello：拒绝非法 nodeId', () => {
