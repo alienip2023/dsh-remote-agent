@@ -138,19 +138,19 @@ test('收口：reg() 必须给每个工具包上净化层', () => {
   assert.match(regBody, /toPlainJson\(/, 'reg 必须把 execute 的返回值过一遍 toPlainJson')
 })
 
-test('收口：toPlainJson 必须覆盖 tools.js 全部 23 个工具（经 reg 注册）', () => {
+test('收口：toPlainJson 必须覆盖 tools.js 全部 24 个工具（经 reg 注册）', () => {
   const src = fs.readFileSync(TOOLS, 'utf8')
   // 工具名以三种形态出现，全部要数进来（否则新增工具时这条断言会静默漏掉）：
   //   1. 8 个任务工具：`reg({ name: 'remote_x', ... })` —— 出现 `name: '...'`
   //   2. 4 个只读文件工具：`fsOp('remote_x', ...)` —— 第一实参独立一行、4 空格缩进
   //   3. 4 个写操作工具（2026-10-20）：`writeOp('remote_x', ...)` —— 同样形态
-  const direct = [...src.matchAll(/name: '(remote_[a-z_]+)'/g)].map((m) => m[1])
+  const direct = [...src.matchAll(/name: '(remote_[a-z_]+|node_jobs)'/g)].map((m) => m[1])
   const viaHelper = [...src.matchAll(/\n {4}'(remote_[a-z_]+)',\n/g)].map((m) => m[1])
   const names = [...direct, ...viaHelper]
-  assert.equal(names.length, 23, `应有 23 个工具，实际 ${names.length}: ${names.join(', ')}`)
-  // 字面量 reg 14 处 + reg(remoteTask) 1 处；高级工具在 advanced-tools.js 单独收口。
+  assert.equal(names.length, 24, `应有 24 个工具，实际 ${names.length}: ${names.join(', ')}`)
+  // 字面量 reg 15 处 + reg(remoteTask) 1 处；高级工具在 advanced-tools.js 单独收口。
   const regCalls = (src.match(/\n {2}reg\(\{/g) || []).length
-  assert.equal(regCalls, 14, `应有 14 处直接 reg({...}) 调用，实际 ${regCalls}`)
+  assert.equal(regCalls, 15, `应有 15 处直接 reg({...}) 调用，实际 ${regCalls}`)
   assert.match(src, /reg\(remoteTask\)/, '单条任务定义仍须经 reg 包装注册')
   assert.match(src, /const fsOp = /, '只读文件工具应经 fsOp 包装注册（统一 fsRequest 错误转译）')
   assert.match(src, /const writeOp = /, '写操作工具应经 writeOp 包装注册（强制 confirm 二次确认）')
@@ -158,6 +158,7 @@ test('收口：toPlainJson 必须覆盖 tools.js 全部 23 个工具（经 reg �
   assert.deepEqual(
     names.slice().sort(),
     [
+      'node_jobs',
       'remote_agents',
       'remote_cancel',
       'remote_delete',

@@ -16,7 +16,7 @@
 ┌─────────────── 主电脑（hub）────────────────┐
 │  DSH · 模型 · 会话日志 · 全部凭证            │
 │  ┌─ dsh-remote-agent ─────────────────────┐ │
-│  │ 25 个 remote_* 工具 + Web 面板          │ │
+│  │ 26 个远程工具 + Web 面板               │ │
 │  └────────────────────────────────────────┘ │
 └──────────────────▲──────────────────────────┘
                    │ 节点主动拨入（direct / relay）
@@ -274,11 +274,11 @@ node bin/dsh-remote-setup.js --doctor 你的配置.yml
 `remote_screenshot` 在 Windows 副机捕获完整虚拟桌面，返回 PNG 元数据、保存路径与 SHA256；
 图片分块经既有 E2E 通道传输，临时截图有大小、数量和 TTL 上限。非 Windows 节点会明确报告不支持。
 
-### 工具速查（共 25 个）
+### 工具速查（共 26 个）
 
 | 类别 | 工具 |
 |---|---|
-| **节点** | `remote_nodes`（列表 + 负载 + 队列 + 模型清单）|
+| **节点** | `remote_nodes`（列表 + 负载 + 队列 + 模型清单 + 进程任务统计）、`node_jobs`（长跑进程台账 + 进度 + 重复标记）|
 | **任务** | `remote_task`（派发，支持 fresh gate）· `remote_task_batch`（批量派发 1–50 条）· `remote_status`（查进度）· `remote_cancel` / `remote_interrupt`（取消）|
 | **后台管理** | `remote_agents`（list / status / wait）· `remote_selfcheck`（真实环境自检）|
 | **审批** | `remote_task` 的 `approval: 'manual'` 会挂起 → 面板或工具批准/拒绝 |
@@ -291,6 +291,12 @@ node bin/dsh-remote-setup.js --doctor 你的配置.yml
 `remote_task` / `remote_task_batch` 的 `workspace` 可用绝对路径或相对路径（如 `bots/rb1`）。相对路径按目标节点 `roots[0]` 解析；逃逸返回 `workspace-escape`，缺少 roots 返回 `workspace-unresolved`。绝对路径仍由副机按允许的 roots 校验。
 
 `remote_task_batch` 接收 `tasks: [{ goal, node?, mode?, workspace?, timeoutMs?, outputs? }]`，以及批次级 `dryRun`、`approval`、`precheck`。返回 `{ results: [{ index, taskId, node, accepted, workspace, mode, status, error? }], accepted, rejected }`；每条失败独立返回。`dryRun: true` 只预览，不落库不派发；成功预览额外返回 `dryRun` 和 `approval`。省略 approval 时逐条按模式默认（exec=manual、agent=auto），待审批与成功预览均不计入 accepted / rejected。
+
+`node_jobs({ node?: "node001" })` 按节点查看进程台账。Linux 节点启动及每 15 秒扫描 `/proc`：只登记工作目录在配置绝对 `roots` 内、父 PID 为 1、启动超过 20 秒的脱离进程，排除自身及 DSH/remote-agent。连接恢复后补报快照；扫描不可用时保留上次观测。台账不参与任务引擎的排队和并发控制。
+
+节点服务 `ctx.get('remote-agent:jobs')` 提供 `scan()`、`list()` 和 `await register({ pid, name?, progressFile? })`，register 为已发现的运行进程补元数据，相对进度路径按该进程 cwd 解析。未指定文件时选择 cwd 下按名称排序的第一个 `res*.tsv`，统计行数（含末尾未换行的一行）及 mtime。同目录同脚本的后启动实例带 `duplicateOf`，只作提示。记录原子保存到节点 `stateDir/jobs.json`；消失后标 `done` 并保留七天，无法确认存活状态时标 `lost`。`done` 只说明进程结束，不能据此认定业务成功。
+
+主控每节点最多接收 200 条，优先展示运行进程（按启动时间从早到晚），余量展示最近历史；完整台账留在节点。主控 `stateDir/node-jobs.json` 保存最后快照，恢复时节点先标离线。上报只含 id/name/pid/cwd/startedAt/status/progressLines/duplicateOf，所以工具展示“进度 N 行”，文件路径和 mtime 留在节点。`remote_nodes` 同时给出在跑、已完成、重复数量。
 
 ---
 
