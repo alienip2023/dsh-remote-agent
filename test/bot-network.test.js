@@ -108,7 +108,7 @@ test('node send validates the local sender and rebuilds outbound payloads', asyn
   assert.equal(network.send({ ...payload, extra: true }), true)
   assert.deepEqual(sent, [{ type: 'bot/message', data: payload }])
   assert.throws(() => network.send(message()), invalidMessage)
-  assert.throws(() => network.send({ ...payload, depth: 4 }), invalidMessage)
+  assert.equal(network.send({ ...payload, depth: 4 }), false)
   network.dispose()
   assert.equal(network.send(payload), false)
   assert.deepEqual(network.directory(), [])
@@ -122,7 +122,7 @@ test('node handles an ask and automatically replies with swapped identities and 
   const dispatch = createFrameDispatcher({ network })
   assert.equal(dispatch({ t: 'bot/message', d: message() }), true)
   await tick()
-  assert.deepEqual(sent, [{ type: 'bot/message', data: { ...message(), kind: 'reply', from: to, to: from, text: 'x'.repeat(65536) } }])
+  assert.deepEqual(sent, [{ type: 'bot/message', data: { ...message(), kind: 'reply', from: to, to: from, text: 'x'.repeat(65536), depth: 1 } }])
 })
 
 test('handler errors, null results, invalid frames and unsubscribed handlers do not reply', async t => {
@@ -192,7 +192,7 @@ test('node worker exposes bot-network and wires real transport frames without a 
 test('hub helpers send validated directory/message and forward authenticated messages to the host', async () => {
   const { createHubBotNetwork } = await import('../lib/hub/bot-network.js')
   class Core extends EventEmitter {
-    constructor() { super(); this.nodes = new Map([['node-a', { nodeId: 'node-a' }]]); this.sent = []; this.logs = [] }
+    constructor() { super(); this.nodes = new Map([['node-a', { nodeId: 'node-a' }], ['node-b', { nodeId: 'node-b' }]]); this.sent = []; this.logs = [] }
     send(nodeId, type, data) { this.sent.push({ nodeId, type, data }); return true }
     log(...args) { this.logs.push(args) }
   }
@@ -260,7 +260,7 @@ test('assembled nodes exchange ask/reply through the hub registry and serialized
     assert.deepEqual(networks[0].directory(), [{ ...from, role: '' }, { ...to, role: '' }])
     assert.equal(networks[0].send(message()), true)
     await tick()
-    assert.deepEqual(received, [{ ...message(), kind: 'reply', from: to, to: from, text: 'pong' }])
+    assert.deepEqual(received, [{ ...message(), kind: 'reply', from: to, to: from, text: 'pong', depth: 1 }])
   } finally {
     for (const dispose of disposers.reverse()) dispose()
     hub.botNetwork.dispose()
