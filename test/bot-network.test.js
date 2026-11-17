@@ -67,7 +67,7 @@ test('validateBotDirectory drops invalid entries and rebuilds valid entries', ()
   const checked = protocol.validateBotDirectory({ bots: [null, [], {}, { ...bot, id: 'x'.repeat(201) },
     { ...bot, name: 'x'.repeat(81) }, { ...bot, nodeId: 'x'.repeat(81) }, { ...bot, name: '' },
     { ...bot, role: 1 }, { ...bot, extra: true }, { ...from, role: null }, from], at: 123, extra: true })
-  assert.deepEqual(checked, { bots: [bot, { ...from, role: '' }, { ...from, role: '' }], at: 123 })
+  assert.deepEqual(checked, { bots: [bot, { ...from, role: '' }, { ...from, role: '' }], rooms: [], at: 123 })
   assert.throws(() => protocol.validateBotDirectory({ bots: 'no' }), { code: 'bot-directory-invalid' })
   assert.throws(() => protocol.validateBotDirectory({ bots: Array(501).fill(bot) }), { code: 'bot-directory-invalid' })
   assert.equal(protocol.validateBotDirectory({ bots: Array(500).fill(bot) }).bots.length, 500)
