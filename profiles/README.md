@@ -410,7 +410,8 @@ hub 插件自带一个浏览器面板，不用敲工具名就能看节点、派�
 | 操作 | 「拉取全部成品」（见下方安全边界）、「取消任务」 |
 
 数据走 hub 注册的 `/api/remote-agent/ui/*` 路由（overview / nodes / tasks / task / dispatch /
-cancel / pull），面板挂载后每 4 秒自动刷新一次。这些路由**自带同源/鉴权围栏**：跨站请求
+cancel / pull）。面板每 8 秒刷新一次，页面不可见（后台标签/最小化）时暂停刷新，回到前台后继续。
+这些路由**自带同源/鉴权围栏**：跨站请求
 （`sec-fetch-site: cross-site`，或 `Origin` 与 `Host` 不一致）一律 403；无 `Origin` 的本机
 调用（如 `curl`）放行。
 

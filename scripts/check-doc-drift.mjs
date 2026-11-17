@@ -257,8 +257,11 @@ check('17', 'sidebar.panellist 用 id: PANEL_KEY', /id:\s*PANEL_KEY/.test(client
 check('18', 'main 用 key: PANEL_KEY', /key:\s*PANEL_KEY/.test(client), 'client.js')
 check('19', 'client 侧 API 前缀与 Host 一致',
   client.includes(`'${UI_PREFIX}'`), 'client.js var API')
-check('20', '轮询间隔 4 秒（文档已声明）',
-  /setInterval\(load,\s*4000\)/.test(client) && /4\s*秒/.test(readme),
+check('20', '轮询 8 秒且页面隐藏时不请求（文档已声明）',
+  /\bPOLL_MS\s*=\s*8000\b/.test(client)
+  && /\bshouldPoll\s*\(/.test(client)
+  && /\bsetInterval\s*\(\s*function\s*\(\s*\)\s*\{/.test(client)
+  && /8\s*秒/.test(readme) && /隐藏|不可见/.test(readme),
   'client.js + README')
 check('21', '主题 token 带兜底 currentColor（t11 误报后的加固）',
   /state-idle-primary,currentColor/.test(client), 'client.js')
