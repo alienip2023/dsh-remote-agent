@@ -187,7 +187,7 @@ test('runner.js：任务书通过 stdin 传，不拼进 argv', () => {
   const argsIdx = runner.indexOf('const args = []')
   assert.ok(argsIdx >= 0, '应存在 args 构造')
   const argsBlock = runner.slice(argsIdx, argsIdx + 500)
-  assert.match(argsBlock, /args\.push\('headless', '--json'/, '应构造 headless --json 参数')
+  assert.match(runner, /const args = buildHeadlessArgs\(/, '应通过 buildHeadlessArgs 构造 headless 参数')
   assert.match(argsBlock, /'-'\)/, "argv 末尾应是 '-'（读 stdin），不是 goal")
   assert.ok(
     !/args\.push\([^)]*\bgoal\b/.test(argsBlock),
