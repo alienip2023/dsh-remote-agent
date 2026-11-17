@@ -165,8 +165,11 @@ test('worker 视图用独立变量名，不与 hub 视图冲突', () => {
 
 test('轮询依赖里带 tick（刷新按钮靠它触发重拉）', () => {
   const code = stripComments(client)
-  const i = code.search(/(?:var|let|const) timer = setInterval\(load, 4000\)/)
+  const i = code.search(/(?:var|let|const) timer = setInterval\(function \(\) \{/)
   assert.ok(i >= 0, '应存在轮询 timer')
   const seg = code.slice(i, i + 400)
-  assert.match(seg, /\}, \[setState, state\.mode, tick\]\)/, '依赖数组应含 tick（否则刷新按钮无效）')
+  const timer = seg.match(/setInterval\(function \(\) \{([\s\S]*?)\}, POLL_MS\)/)
+  assert.ok(timer, '轮询 timer 应使用函数体和 POLL_MS')
+  assert.match(timer[1], /if \(!shouldPoll\([^\n]+\)\) return\s+load\(\)/, '轮询体内的 load() 应受 shouldPoll 守卫')
+  assert.match(seg, /\[setState, state\.mode, tick\]/, '依赖数组应含 tick（否则刷新按钮无效）')
 })
