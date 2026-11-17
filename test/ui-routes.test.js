@@ -387,6 +387,8 @@ test('UI overview：形状正确，capabilities.pull 反映 uiPullRoot 配置', 
   assert.equal(r.json.nodes.length, 1)
   assert.equal(r.json.nodes[0].nodeId, env.nodeId)
   assert.equal(r.json.nodes[0].online, true)
+  assert.equal(r.json.topology.nodes.length, r.json.nodes.length)
+  assert.equal(r.json.topology.nodes[0].nodeId, env.nodeId)
 
   // counts
   assert.equal(typeof r.json.counts.nodes, 'number')
@@ -418,6 +420,47 @@ test('UI overview：未配置 uiPullRoot 时 capabilities.pull=false', async (t)
   assert.equal(r.status, 200)
   assert.equal(r.json.capabilities.pull, false, '未配置时应为 false')
   assert.equal(r.json.capabilities.pullRoot, null)
+})
+
+test('UI topology：真实 registry 能力投影、畸形链路静默降级且两条节点响应不泄露内部字段', async (t) => {
+  const root = tmpRoot(t)
+  const relay = await startRelay(t)
+  const env = await setup(t, { root, relay })
+  const rec = env.hub.registry.getNode(env.nodeId)
+  rec.hello.peerUrl = 'http://PRIVATE-peerUrl'
+  rec.hello.peerSecret = 'PRIVATE-peerSecret'
+  rec.connectivity = {
+    transportMode: 'relay', tunnelState: 'ready', sampledAt: 123,
+    peerUrl: 'PRIVATE-peerUrl', peerSecret: 'PRIVATE-peerSecret', hello: 'PRIVATE-hello',
+    resource: 'PRIVATE-resource', roots: 'PRIVATE-roots',
+    tunnel: { kind: 'frpc', server: 'example:7000', peerSecret: 'PRIVATE-peerSecret' },
+    probes: [{ target: 'example:443', result: 'open', rttMs: 2, hello: 'PRIVATE-hello' }],
+  }
+  const good = await env.get(`${UI}/overview`)
+  assert.equal(good.status, 200)
+  assert.equal(good.json.topology.nodes.length, good.json.nodes.length)
+  assert.equal(good.json.nodes[0].peerCapable, true)
+  assert.equal(good.json.topology.nodes[0].peerCapable, true)
+  assert.equal(good.json.nodes[0].connectivity.probes[0].rttMs, 2)
+  assert.equal(good.json.topology.nodes[0].transport, 'relay')
+  for (const endpoint of ['/overview', '/nodes']) {
+    const response = await env.get(UI + endpoint)
+    for (const key of ['peerUrl', 'peerSecret', 'hello', 'resource', 'roots']) {
+      assert.ok(!response.text.includes(`"${key}"`), `${endpoint} leaked key ${key}`)
+      assert.ok(!response.text.includes(`PRIVATE-${key}`), `${endpoint} leaked value ${key}`)
+    }
+  }
+  for (const bad of [null, 'bad', [], { transportMode: {}, tunnelState: 'weird', tunnel: [], probes: {}, sampledAt: NaN }]) {
+    rec.connectivity = bad
+    const response = await env.get(`${UI}/overview`)
+    assert.equal(response.status, 200)
+    assert.equal(response.json.topology.nodes[0].sampledAt, null)
+    assert.equal(response.json.topology.nodes[0].transport, null)
+    if (response.json.nodes[0].connectivity) {
+      assert.deepEqual(response.json.nodes[0].connectivity.probes, [])
+      assert.equal(response.json.nodes[0].connectivity.tunnel, null)
+    } else assert.equal(response.json.nodes[0].connectivity, null)
+  }
 })
 
 /* ══════════════════════════════════════════════════════════════════
