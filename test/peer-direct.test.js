@@ -428,7 +428,7 @@ for (const mode of ['tcp', 'memory']) test(`one hub and two assembled workers us
   const check = await registry.fsRequest('a', 'selfcheck', { purpose: 'exec' })
   assert.deepEqual(check.peerDirect, contexts[0].get('remote-agent:peer-direct').snapshot())
   let status
-  contexts[0].get('test:routes').get('/api/remote-agent/status')({ method: 'GET' }, { setHeader() {}, end: raw => { status = JSON.parse(raw) } })
+  await contexts[0].get('test:routes').get('/api/remote-agent/status')({ method: 'GET' }, { setHeader() {}, end: raw => { status = JSON.parse(raw) } })
   assert.deepEqual(status.peerDirect, check.peerDirect)
   const peerPort = Number(contexts[1].get('remote-agent:peer-direct').snapshot().listening.split(':').at(-1))
   for (const [server, sockets] of servers) {
