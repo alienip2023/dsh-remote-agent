@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import fs, { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -32,6 +32,145 @@ function fixture(t) {
 
 async function resolver() {
   return import('../lib/profile-path.js')
+}
+
+function generation(f, name = 'current', packageName = 'dsh-remote-agent') {
+  const dir = path.join(f.home, 'profiles', '.generations', 'live', name, 'node_modules', packageName)
+  mkdirSync(path.join(dir, 'lib'), { recursive: true })
+  writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: packageName, type: 'module' }))
+  return { dir, moduleUrl: pathToFileURL(path.join(dir, 'lib', 'profile-path.js')).href }
+}
+
+function linkGeneration(f, profile, dir, packageName = 'dsh-remote-agent') {
+  const link = path.join(f.profile(profile), 'node_modules', packageName)
+  mkdirSync(path.dirname(link), { recursive: true })
+  symlinkSync(dir, link, 'dir')
+}
+
+for (const packageName of ['dsh-remote-agent', 'renamed-agent', '@fixture/agent']) {
+  test(`generation ${packageName} resolves the unique linked profile and skips hidden profiles`, async (t) => {
+    const f = fixture(t)
+    const g = generation(f, 'current', packageName)
+    linkGeneration(f, 'web', g.dir, packageName)
+    linkGeneration(f, '.hidden', g.dir, packageName)
+    const { resolveProfileDir, resolvePatchFile } = await resolver()
+    const options = { ...f.options, moduleUrl: g.moduleUrl }
+    assert.equal(resolveProfileDir(options), f.profile('web'))
+    assert.equal(resolvePatchFile(options), path.join(f.profile('web'), 'cordis.patch.yml'))
+    assert.equal(existsSync(f.profile('desktop')), false)
+  })
+}
+
+test('generation linked to another generation stays unresolved', async (t) => {
+  const f = fixture(t)
+  const current = generation(f)
+  const other = generation(f, 'other')
+  linkGeneration(f, 'web', other.dir)
+  const { resolveProfileDir } = await resolver()
+  assert.throws(() => resolveProfileDir({ ...f.options, moduleUrl: current.moduleUrl }), { code: 'profile-unresolved' })
+})
+
+test('generation shared by two profiles stays unresolved instead of selecting the first', async (t) => {
+  const f = fixture(t)
+  const g = generation(f)
+  linkGeneration(f, 'web', g.dir)
+  linkGeneration(f, 'desktop', g.dir)
+  const { resolveProfileDir } = await resolver()
+  assert.throws(() => resolveProfileDir({ ...f.options, moduleUrl: g.moduleUrl }), { code: 'profile-unresolved' })
+})
+
+test('explicit DSH_PROFILE bypasses generation enumeration, including invalid names', async (t) => {
+  const f = fixture(t)
+  const g = generation(f)
+  const { resolveProfileDir } = await resolver()
+  const readdir = t.mock.method(fs, 'readdirSync', () => { throw new Error('must not enumerate profiles') })
+  assert.equal(resolveProfileDir({
+    ...f.options, moduleUrl: g.moduleUrl, env: { DSH_HOME: f.home, DSH_PROFILE: ' web ' },
+  }), f.profile('web'))
+  assert.throws(() => resolveProfileDir({
+    ...f.options, moduleUrl: g.moduleUrl, env: { DSH_HOME: f.home, DSH_PROFILE: '../web' },
+  }), { code: 'profile-unresolved' })
+  assert.equal(readdir.mock.callCount(), 0)
+})
+
+test('traditional injected installation still resolves without enumerating profiles', async (t) => {
+  const f = fixture(t)
+  const plugin = f.install('web')
+  const { resolveProfileDir } = await resolver()
+  const readdir = t.mock.method(fs, 'readdirSync', () => { throw new Error('must not enumerate profiles') })
+  assert.equal(resolveProfileDir({
+    ...f.options, moduleUrl: pathToFileURL(path.join(plugin, 'lib', 'profile-path.js')).href,
+  }), f.profile('web'))
+  assert.equal(readdir.mock.callCount(), 0)
+})
+
+test('generation infers the package name when package.json has no name', async (t) => {
+  const f = fixture(t)
+  const g = generation(f, 'current', 'inferred-agent')
+  writeFileSync(path.join(g.dir, 'package.json'), '{"type":"module"}')
+  linkGeneration(f, 'web', g.dir, 'inferred-agent')
+  const { resolveProfileDir } = await resolver()
+  assert.equal(resolveProfileDir({ ...f.options, moduleUrl: g.moduleUrl }), f.profile('web'))
+})
+
+test('generation uses package.json name when the package directory is an alias', async (t) => {
+  const f = fixture(t)
+  const g = generation(f, 'current', 'artifact-directory')
+  writeFileSync(path.join(g.dir, 'package.json'), '{"name":"manifest-agent"}')
+  linkGeneration(f, 'web', g.dir, 'manifest-agent')
+  const { resolveProfileDir } = await resolver()
+  assert.equal(resolveProfileDir({ ...f.options, moduleUrl: g.moduleUrl }), f.profile('web'))
+})
+
+test('generation resolves under the injected default home .dsh', async (t) => {
+  const f = fixture(t)
+  const dshHome = path.join(f.home, '.dsh')
+  const defaultFixture = { home: dshHome, profile: name => path.join(dshHome, 'profiles', name) }
+  const g = generation(defaultFixture)
+  linkGeneration(defaultFixture, 'web', g.dir)
+  const { resolveProfileDir } = await resolver()
+  assert.equal(resolveProfileDir({ env: {}, homeDir: f.home, moduleUrl: g.moduleUrl }), defaultFixture.profile('web'))
+})
+
+test('generation without DSH_HOME uses its containing profiles root instead of guessing from the default home', async (t) => {
+  const f = fixture(t)
+  const g = generation(f)
+  linkGeneration(f, 'web', g.dir)
+  const defaultFixture = { profile: name => path.join(f.home, '.dsh', 'profiles', name) }
+  linkGeneration(defaultFixture, 'desktop', g.dir)
+  const { resolveProfileDir } = await resolver()
+  assert.equal(resolveProfileDir({ env: {}, homeDir: f.home, moduleUrl: g.moduleUrl }), f.profile('web'))
+  assert.equal(resolveProfileDir({
+    env: { DSH_HOME: path.join(f.home, '.dsh') }, homeDir: f.home, moduleUrl: g.moduleUrl,
+  }), defaultFixture.profile('desktop'))
+})
+
+for (const initialProfiles of [[], ['web'], ['web', 'desktop']]) {
+  test(`generation caches ${initialProfiles.length} matches and can explicitly clear the cache`, async (t) => {
+    const f = fixture(t)
+    const g = generation(f)
+    for (const name of initialProfiles) linkGeneration(f, name, g.dir)
+    const { resolveProfileDir, resolvePatchFile, clearProfileDirCache } = await resolver()
+    clearProfileDirCache()
+    t.after(clearProfileDirCache)
+    const readdir = t.mock.method(fs, 'readdirSync')
+    const options = { ...f.options, moduleUrl: g.moduleUrl }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (initialProfiles.length === 1) {
+        assert.equal(resolveProfileDir(options), f.profile('web'))
+        assert.equal(resolvePatchFile(options), path.join(f.profile('web'), 'cordis.patch.yml'))
+      } else {
+        assert.throws(() => resolveProfileDir(options), { code: 'profile-unresolved' })
+        assert.throws(() => resolvePatchFile(options), { code: 'profile-unresolved' })
+      }
+    }
+    assert.equal(readdir.mock.callCount(), 1)
+    if (initialProfiles.length === 0) linkGeneration(f, 'web', g.dir)
+    else if (initialProfiles.length === 2) rmSync(f.profile('desktop'), { recursive: true })
+    clearProfileDirCache()
+    assert.equal(resolveProfileDir(options), f.profile('web'))
+    assert.equal(readdir.mock.callCount(), 2)
+  })
 }
 
 test('setup resolves explicit web without a patch and never creates desktop', (t) => {
